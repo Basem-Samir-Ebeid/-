@@ -1,7 +1,7 @@
 {
   "framework": "vite",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm --dir artifacts/qatalin-game build",
+  "buildCommand": "pnpm --filter qatalin-game build",
   "outputDirectory": "artifacts/qatalin-game/dist/public",
   "cleanUrls": true
 }
