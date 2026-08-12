@@ -1,0 +1,9 @@
+{
+  "buildCommand": "pnpm --filter @workspace/api-server build",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "functions": {
+    "artifacts/api-server/api/index.js": {
+      "maxDuration": 60
+    }
+  }
+}
