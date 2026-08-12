@@ -1,6 +1,7 @@
 {
-  "framework": "nextjs",
+  "framework": "vite",
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "pnpm --filter @workspace/qatalin-game build",
+  "buildCommand": "pnpm --dir artifacts/qatalin-game build",
+  "outputDirectory": "artifacts/qatalin-game/dist/public",
   "cleanUrls": true
 }
