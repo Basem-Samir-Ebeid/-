@@ -13,9 +13,22 @@ router.post("/rooms", async (req, res) => {
   const displayName = String(req.body?.displayName ?? "").trim();
   const teamName = String(req.body?.teamName ?? "").trim();
   if (!displayName || !teamName) return res.status(400).json({ message: "اسم اللاعب والفريق مطلوبان" });
-  const [room] = await db.insert(gameRooms).values({ code: code() }).returning();
-  const [player] = await db.insert(gamePlayers).values({ roomId: room.id, displayName, teamName }).returning();
-  return res.status(201).json({ roomCode: room.code, playerId: player.id });
+  if (displayName.length > 80 || teamName.length > 80) return res.status(400).json({ message: "الاسم يجب ألا يتجاوز 80 حرفاً" });
+
+  try {
+    let room: typeof gameRooms.$inferSelect | undefined;
+    for (let attempt = 0; attempt < 5 && !room; attempt += 1) {
+      const [created] = await db.insert(gameRooms).values({ code: code() }).onConflictDoNothing({ target: gameRooms.code }).returning();
+      room = created;
+    }
+    if (!room) return res.status(503).json({ message: "تعذر حجز كود الغرفة، حاول مرة أخرى" });
+    const [player] = await db.insert(gamePlayers).values({ roomId: room.id, displayName, teamName }).returning();
+    if (!player) return res.status(503).json({ message: "تعذر إنشاء اللاعب داخل الغرفة" });
+    return res.status(201).json({ roomCode: room.code, playerId: player.id });
+  } catch (error) {
+    console.error("[v0] room creation failed", error);
+    return res.status(500).json({ message: "تعذر إنشاء الغرفة حالياً" });
+  }
 });
 
 router.post("/rooms/:roomCode/join", async (req, res) => {
@@ -44,7 +57,7 @@ router.post("/rooms/:roomCode/ready", async (req, res) => {
   if (!room) return res.status(404).json({ message: "الغرفة غير موجودة" });
   await db.update(gamePlayers).set({ isReady: true }).where(and(eq(gamePlayers.id, playerId), eq(gamePlayers.roomId, room.id)));
   const players = await db.select().from(gamePlayers).where(eq(gamePlayers.roomId, room.id));
-  if (players.length >= 2 && players.length <= 15 && players.every((p) => p.isReady)) await db.update(gameRooms).set({ status: "playing", phase: "question", round: 1, currentPlayerId: players[0].id }).where(eq(gameRooms.id, room.id));
+  if (players.length >= 2 && players.length <= 15 && players.every((p: typeof gamePlayers.$inferSelect) => p.isReady)) await db.update(gameRooms).set({ status: "playing", phase: "question", round: 1, currentPlayerId: players[0].id }).where(eq(gameRooms.id, room.id));
   return res.json({ ok: true });
 });
 

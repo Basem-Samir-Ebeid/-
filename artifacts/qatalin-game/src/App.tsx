@@ -43,11 +43,12 @@ function App() {
   const update = (changes: Partial<GameState>) => setGame((current) => ({ ...current, ...changes }));
   const setCount = (count: number) => update({ playerCount: count, owners: Array.from({ length: count }, (_, i) => game.owners[i] ?? ownerDefaults[i] ?? `لاعب ${i + 1}`) });
   const beginTeams = () => update({ screen: 'teams', setupIndex: 0, teams: [] });
-  const saveTeam = () => {
+  const saveTeam = async () => {
     const cleaned = draft.map((player, index) => ({ ...player, name: player.name.trim() || `لاعب كرة ${index + 1}` }));
     const teams = [...game.teams, { owner: game.owners[game.setupIndex], footballers: cleaned }];
     if (game.onlineRoomCode && game.onlinePlayerId) {
-      void fetch(`${process.env.NEXT_PUBLIC_API_URL ?? '/api'}/rooms/${game.onlineRoomCode}/roster`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, roster: cleaned }) });
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? '/api'}/rooms/${game.onlineRoomCode}/roster`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, roster: cleaned }) });
+      if (!response.ok) return;
     }
     if (game.setupIndex === game.playerCount - 1) setGame({ ...game, screen: 'game', phase: 'question', teams, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, winner: null, history: [] });
     else { update({ teams, setupIndex: game.setupIndex + 1 }); setDraft(emptyFootballers()); }
@@ -66,7 +67,7 @@ function App() {
 }
 
 function IntroView({ onStart, onRules }: { onStart: () => void; onRules: () => void }) {
-  return <motion.main className="intro-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><section className="hero"><div className="hero-copy"><div className="eyebrow">مواجهة فرق — سري للغاية</div><h1 className="hero-title">عصابة<em>الملاعب</em></h1><p className="hero-lede">كل لاعب يبني فريقاً من 10 نجوم كرة قدم ويخفي بينهم زعيمين للعصابة. اسأل، راقب، ثم اكشف فريق خصمك واستبعد رجاله أو اغتل زعماءه.</p><div className="hero-actions"><button className="primary-button" onClick={onStart}>أنشئ الغرفة <ArrowLeft size={17} /></button><button className="ghost-button" onClick={onRules}>كيف نلعب؟ <CircleHelp size={17} /></button></div><div className="hero-note"><UsersRound size={14} /> من 2 إلى 15 لاعباً حقيقياً · 10 نجوم لكل فريق</div></div><div className="hero-art"><img src={referenceArtwork} alt="ملف عصابة الملاعب الفني" /><div className="art-stamp">تشكيلة سرية / ممنوع الكشف</div></div></section><section className="intro-rules"><div className="eyebrow">خطة المواجهة</div><h2 className="section-title">كوّن فريقك. أخفِ زعماءك.</h2><div className="rules-grid">{[['01','ابنِ التشكيلة','سمّ 10 لاعبي كرة في فريقك وحدد اثنين فقط كزعيمي العصابة.'],['02','حقق مع الخصم','في دورك ناقش سؤال الجولة ثم اختر لاعباً من فريق خصمك لكشفه.'],['03','احسم المصير','استبعد اللاعب العادي، وإذا اكتشفت زعيماً افتح أمر الاغتيال.']].map(([n,t,b]) => <article className="rule-card" key={n}><div className="rule-number">{n}</div><h3>{t}</h3><p>{b}</p></article>)}</div></section></motion.main>;
+  return <motion.main className="intro-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><section className="hero"><div className="hero-copy"><div className="eyebrow">مواجهة فرق — سري للغاية</div><h1 className="hero-title">عصابة<em>الملاعب</em></h1><p className="hero-lede">كل لاعب يبني فريقاً من 10 نجوم كرة قدم ويخفي بينهم زعيمين للعصابة. اسأل، راقب، ثم اكشف فريق خصمك واستبعد رجاله أو اغتل زعماءه.</p><div className="hero-actions"><button className="primary-button" onClick={onStart}>أنشئ الغرفة <ArrowLeft size={17} /></button><button className="ghost-button" onClick={onRules}>كيف نلعب؟ <CircleHelp size={17} /></button></div><div className="hero-note"><UsersRound size={14} /> من 2 إلى 15 لاعباً حقيقياً · 10 نجوم لكل فريق</div></div><div className="hero-art"><img src={referenceArtwork} alt="ملف عصابة الملاعب الفني" /><div className="art-stamp">تشكيلة سرية / ممنوع الكشف</div></div></section><section className="intro-rules"><div className="eyebrow">خطة المواجهة</div><h2 className="section-title">كوّن فريقك. أخفِ زعماءك.</h2><div className="rules-grid">{[['01','ابنِ التشكيلة','سمّ 10 لاعبي كرة في فريقك وحدد اثنين فقط كزعيمي العصابة.'],['02','حقق مع الخصم','في دورك ناقش سؤال الجولة ثم اختر لاعباً من فريق خصمك لكشفه.'],['03','احسم المصير','استبعد اللاعب العادي، وإذا اكتشفت زعيماً افتح أمر الاغ��يال.']].map(([n,t,b]) => <article className="rule-card" key={n}><div className="rule-number">{n}</div><h3>{t}</h3><p>{b}</p></article>)}</div></section></motion.main>;
 }
 
 function RoomSetup({ game, setCount, update, onBack, onContinue }: { game: GameState; setCount: (n:number)=>void; update:(c:Partial<GameState>)=>void; onBack:()=>void; onContinue:()=>void }) {
@@ -102,11 +103,11 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
   const selected = game.targetTeam!==null && game.targetPlayer!==null ? game.teams[game.targetTeam].footballers[game.targetPlayer] : null;
   const update = (c:Partial<GameState>) => setGame({...game,...c});
   const syncEvent = (eventType: string, targetId?: string) => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; void fetch(`${process.env.NEXT_PUBLIC_API_URL ?? '/api'}/rooms/${game.onlineRoomCode}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actorId: game.onlinePlayerId, targetId, eventType, payload: { round: game.round } }) }); };
-  const reveal = () => { if (game.targetTeam===null || game.targetPlayer===null) return; const teams=game.teams.map((t,ti)=>ti===game.targetTeam?{...t,footballers:t.footballers.map((p,pi)=>pi===game.targetPlayer?{...p,revealed:true}:p)}:t); syncEvent('reveal', selected?.name); setGame({...game,teams,phase:'reveal'}); };
+  const reveal = () => { if (game.targetTeam===null || game.targetPlayer===null) return; const teams=game.teams.map((t,ti)=>ti===game.targetTeam?{...t,footballers:t.footballers.map((p,pi)=>pi===game.targetPlayer?{...p,revealed:true}:p)}:t);     syncEvent('reveal'); setGame({...game,teams,phase:'reveal'}); };
   const act = (action:'exclude'|'assassinate') => {
     if(game.targetTeam===null||game.targetPlayer===null||!selected) return;
     if(action==='assassinate'&&(!selected.isBoss||!selected.revealed)) return;
-    syncEvent(action, selected.name);
+    syncEvent(action);
     const status: Footballer['status'] = action === 'assassinate' ? 'assassinated' : 'excluded';
     const teams=game.teams.map((t,ti)=>ti===game.targetTeam?{...t,footballers:t.footballers.map((p,pi)=>pi===game.targetPlayer?{...p,status}:p)}:t);
     const aliveTeams=teams.map((t,i)=>({i,alive:t.footballers.some(p=>p.isBoss&&p.status!=='assassinated')})).filter(x=>x.alive);
