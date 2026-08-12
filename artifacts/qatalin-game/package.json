@@ -75,6 +75,6 @@
     "zod": "catalog:"
   },
   "dependencies": {
-    "next": "16.0.1"
+    "next": "16.0.10"
   }
 }
