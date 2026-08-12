@@ -20,6 +20,7 @@ type HelperCard = { id: string; name: string; description: string; instruction: 
 type GameState = { version: 3; screen: Screen; phase: Phase; playerCount: number; owners: string[]; teams: Team[]; setupIndex: number; round: number; turn: number; targetTeam: number | null; targetPlayer: number | null; notes: string; winner: number | null; history: HistoryItem[]; helperCards: Record<string, string>; onlineRoomCode?: string; onlinePlayerId?: string };
 
 const queryClient = new QueryClient();
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'https://api-server-wdiz-bthhjt766-vvvvv3.vercel.app/api';
 const STORAGE_KEY = 'qatalin-football-gangs-v2';
 const ownerDefaults = ['أحمد', 'محمد', 'كريم', 'عمر', 'يوسف', 'زياد'];
 const footballDefaults = ['محمد صلاح', 'ليونيل ميسي', 'كريستيانو رونالدو', 'كيليان مبابي', 'إيرلينغ هالاند', 'لوكا مودريتش', 'كيفن دي بروين', 'فينيسيوس جونيور', 'جود بيلينغهام', 'رودري'];
@@ -56,7 +57,7 @@ function App() {
     const cleaned = draft.map((player, index) => ({ ...player, name: player.name.trim() || `لاعب كرة ${index + 1}` }));
     const teams = [...game.teams, { owner: game.owners[game.setupIndex], footballers: cleaned }];
     if (game.onlineRoomCode && game.onlinePlayerId) {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? '/api'}/rooms/${game.onlineRoomCode}/roster`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, roster: cleaned }) });
+      const response = await fetch(`${API_BASE_URL}/rooms/${game.onlineRoomCode}/roster`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, roster: cleaned }) });
       if (!response.ok) return;
     }
     if (game.setupIndex === game.playerCount - 1) setGame({ ...game, screen: 'game', phase: 'question', teams, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, winner: null, history: [] });
@@ -89,7 +90,7 @@ function RoomSetup({ game, setCount, update, onBack, onContinue }: { game: GameS
   const [onlineMode, setOnlineMode] = useState<'idle'|'lobby'>('idle');
   const [onlineError, setOnlineError] = useState('');
   const [isCreating, setIsCreating] = useState(false);
-  const api = import.meta.env.VITE_API_URL ?? '/api';
+  const api = API_BASE_URL;
   const createRoom = async () => {
     if (isCreating || !name.trim() || !teamName.trim()) return;
     setOnlineError('');
@@ -130,7 +131,7 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
   const validTeams = game.teams.map((t,i)=>({t,i})).filter(({t,i})=>i!==game.turn && t.footballers.some(p=>p.status==='active'));
   const selected = game.targetTeam!==null && game.targetPlayer!==null ? game.teams[game.targetTeam].footballers[game.targetPlayer] : null;
   const update = (c:Partial<GameState>) => setGame({...game,...c});
-  const syncEvent = (eventType: string, targetId?: string) => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; void fetch(`${process.env.NEXT_PUBLIC_API_URL ?? '/api'}/rooms/${game.onlineRoomCode}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actorId: game.onlinePlayerId, targetId, eventType, payload: { round: game.round } }) }); };
+  const syncEvent = (eventType: string, targetId?: string) => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; void fetch(`${API_BASE_URL}/rooms/${game.onlineRoomCode}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actorId: game.onlinePlayerId, targetId, eventType, payload: { round: game.round } }) }); };
   const reveal = () => { if (game.targetTeam===null || game.targetPlayer===null) return; const teams=game.teams.map((t,ti)=>ti===game.targetTeam?{...t,footballers:t.footballers.map((p,pi)=>pi===game.targetPlayer?{...p,revealed:true}:p)}:t);     syncEvent('reveal'); setGame({...game,teams,phase:'reveal'}); };
   const act = (action:'exclude'|'assassinate') => {
     if(game.targetTeam===null||game.targetPlayer===null||!selected) return;
