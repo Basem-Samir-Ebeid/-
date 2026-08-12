@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "قاتلين — لعبة الخيانة والاستنتاج"
+description = "لعبة اجتماعية عربية متعددة اللاعبين مستوحاة من لعبة قاتلين، تبدأ بمقدمة سينمائية تشرح الفكرة ثم تسمح بإعداد من 3 إلى 15 لاعباً واللعب عبر جولات من الأسئلة والإجابات والاغتيال وكشف الهوية."
+version = "1.0.0"
+id = "artifacts/qatalin-game"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23308
+
+[services.development]
+run = "pnpm --filter @workspace/qatalin-game run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/qatalin-game", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/qatalin-game/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23308"
+BASE_PATH = "/"
