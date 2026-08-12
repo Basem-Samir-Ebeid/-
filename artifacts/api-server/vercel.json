@@ -1,0 +1,9 @@
+{
+  "buildCommand": "pnpm run build",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "functions": {
+    "api/index.js": {
+      "runtime": "nodejs24.x"
+    }
+  }
+}
