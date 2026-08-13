@@ -409,7 +409,7 @@ importers:
   artifacts/qatalin-game:
     dependencies:
       next:
-        specifier: 16.0.10
+        specifier: 16.2.12
         version: 16.0.10(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
     devDependencies:
       '@hookform/resolvers':
