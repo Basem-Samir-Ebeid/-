@@ -2,5 +2,6 @@
   "framework": "nextjs",
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter @workspace/qatalin-game build",
+  "outputDirectory": "artifacts/qatalin-game/.next",
   "cleanUrls": true
 }
