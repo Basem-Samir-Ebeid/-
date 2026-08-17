@@ -16,7 +16,7 @@ type Phase = 'question' | 'target' | 'reveal' | 'ending';
 type Footballer = { name: string; isBoss: boolean; status: 'active' | 'excluded' | 'assassinated'; revealed: boolean };
 type Team = { owner: string; footballers: Footballer[] };
 type HistoryItem = { round: number; attacker: string; target: string; action: 'exclude' | 'assassinate' };
-type GameState = { version: 2; screen: Screen; phase: Phase; playerCount: number; owners: string[]; teams: Team[]; setupIndex: number; round: number; turn: number; targetTeam: number | null; targetPlayer: number | null; notes: string; winner: number | null; history: HistoryItem[]; onlineRoomCode?: string; onlinePlayerId?: string };
+type GameState = { version: 2; screen: Screen; phase: Phase; playerCount: number; owners: string[]; teams: Team[]; setupIndex: number; round: number; turn: number; targetTeam: number | null; targetPlayer: number | null; exclusionTargets: number[]; notes: string; winner: number | null; history: HistoryItem[]; onlineRoomCode?: string; onlinePlayerId?: string };
 
 const queryClient = new QueryClient();
 const STORAGE_KEY = 'qatalin-football-gangs-v2';
@@ -32,8 +32,8 @@ const questions = [
 ];
 
 const emptyFootballers = () => footballDefaults.map((name) => ({ name, isBoss: false, status: 'active' as const, revealed: false }));
-const initialState = (): GameState => ({ version: 2, screen: 'intro', phase: 'question', playerCount: 2, owners: ownerDefaults.slice(0, 2), teams: [], setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, notes: '', winner: null, history: [] });
-function readSavedGame(): GameState { try { const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? 'null'); return saved?.version === 2 ? saved : initialState(); } catch { return initialState(); } }
+const initialState = (): GameState => ({ version: 2, screen: 'intro', phase: 'question', playerCount: 2, owners: ownerDefaults.slice(0, 2), teams: [], setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, exclusionTargets: [], notes: '', winner: null, history: [] });
+function readSavedGame(): GameState { try { const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? 'null'); return saved?.version === 2 ? { ...saved, exclusionTargets: saved.exclusionTargets ?? [] } : initialState(); } catch { return initialState(); } }
 
 function App() {
   const [game, setGame] = useState<GameState>(readSavedGame);
@@ -109,17 +109,26 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
     if(action==='assassinate'&&(!selected.isBoss||!selected.revealed)) return;
     syncEvent(action, selected.name);
     const status: Footballer['status'] = action === 'assassinate' ? 'assassinated' : 'excluded';
-    const teams=game.teams.map((t,ti)=>ti===game.targetTeam?{...t,footballers:t.footballers.map((p,pi)=>pi===game.targetPlayer?{...p,status}:p)}:t);
+    const targets = action === 'exclude' && selected.isBoss && selected.revealed ? game.exclusionTargets : [game.targetPlayer];
+    if(action === 'exclude' && selected.isBoss && selected.revealed && targets.length !== 2) return;
+    const teams=game.teams.map((t,ti)=>ti===game.targetTeam?{...t,footballers:t.footballers.map((p,pi)=>targets.includes(pi)?{...p,status}:p)}:t);
     const aliveTeams=teams.map((t,i)=>({i,alive:t.footballers.some(p=>p.isBoss&&p.status!=='assassinated')})).filter(x=>x.alive);
-    const history=[...game.history,{round:game.round,attacker:attacker.owner,target:`${selected.name} — ${game.teams[game.targetTeam].owner}`,action}];
+    const history=[...game.history,...targets.map((targetIndex)=>({round:game.round,attacker:attacker.owner,target:`${game.teams[game.targetTeam!].footballers[targetIndex].name} — ${game.teams[game.targetTeam!].owner}`,action}))];
     if(aliveTeams.length===1) setGame({...game,teams,history,winner:aliveTeams[0].i,phase:'ending'});
-    else { let next=(game.turn+1)%teams.length; while(!aliveTeams.some(x=>x.i===next)) next=(next+1)%teams.length; setGame({...game,teams,history,turn:next,round:game.round+1,phase:'question',targetTeam:null,targetPlayer:null,notes:''}); }
+    else { let next=(game.turn+1)%teams.length; while(!aliveTeams.some(x=>x.i===next)) next=(next+1)%teams.length; setGame({...game,teams,history,turn:next,round:game.round+1,phase:'question',targetTeam:null,targetPlayer:null,exclusionTargets:[],notes:''}); }
+  };
+  const toggleExclusionTarget = (playerIndex:number) => {
+    if(game.targetTeam===null) return;
+    const player = game.teams[game.targetTeam].footballers[playerIndex];
+    if(!player || player.status !== 'active' || player.isBoss) return;
+    const next = game.exclusionTargets.includes(playerIndex) ? game.exclusionTargets.filter(index=>index!==playerIndex) : game.exclusionTargets.length < 2 ? [...game.exclusionTargets, playerIndex] : game.exclusionTargets;
+    update({ exclusionTargets: next });
   };
   if(game.phase==='ending') return <EndingView game={game} onReset={onReset}/>;
   return <motion.main className="game-wrap" initial={{opacity:0}} animate={{opacity:1}}><div className="game-header"><div><div className="eyebrow">دور {attacker.owner}</div><h1>{game.phase==='question'?'غرفة التحقيق':game.phase==='target'?'حدد هدفك':'تم كشف الهوية'}</h1></div><div className="round-marker"><strong>{game.round}</strong> الجولة الحالية</div></div><div className="turn-banner"><Target /><div><strong>{attacker.owner} يهاجم الآن</strong><span>اختر لاعباً من فريق خصمك. لا يمكنك استهداف فريقك.</span></div></div><div className="phase-layout"><section className="paper-card phase-card">
     {game.phase==='question'&&<><div className="phase-icon"><CircleHelp /></div><h2>سؤال الجولة</h2><p className="large-copy">ناقش السؤال مع خصومك وابحث عن أي دفاع يكشف ترتيب العصابة.</p><div className="question-quote">« {currentQuestion} »</div><textarea className="answer-box" value={game.notes} onChange={e=>update({notes:e.target.value})} placeholder="دوّن ملاحظاتك عن الإجابات..."/><button className="primary-button action-gap" onClick={()=>update({phase:'target'})}>ابدأ الكشف <ArrowLeft /></button></>}
     {game.phase==='target'&&<><div className="phase-icon"><Crosshair /></div><h2>اختر فريق الخصم</h2><div className="opponent-tabs">{validTeams.map(({t,i})=><button key={i} className={`opponent-tab ${game.targetTeam===i?'selected':''}`} onClick={()=>update({targetTeam:i,targetPlayer:null})}>{t.owner}<span>{t.footballers.filter(p=>p.status==='active').length} متاح</span></button>)}</div>{game.targetTeam!==null&&<div className="footballer-grid">{game.teams[game.targetTeam].footballers.map((p,i)=><button key={i} disabled={p.status!=='active'} className={`footballer-card ${game.targetPlayer===i?'selected':''} ${p.status!=='active'?'out':''}`} onClick={()=>update({targetPlayer:i})}><UserRound /><strong>{p.name}</strong><span>{p.status==='active'?(p.revealed&&p.isBoss?'زعيم مكشوف':'متاح'):p.status==='assassinated'?'تم اغتياله':'مستبعد'}</span></button>)}</div>}<button className="primary-button action-gap" disabled={game.targetPlayer===null} onClick={reveal}>اكشف الهوية <Eye /></button></>}
-    {game.phase==='reveal'&&selected&&<><div className={`reveal-result ${selected.isBoss?'is-boss':''}`}><div className="result-symbol">{selected.isBoss?<Skull />:<UserRound />}</div><span>تم كشف</span><h2>{selected.name}</h2><strong>{selected.isBoss?'زعيم عصابة':'لاعب عادي'}</strong><p>{selected.isBoss?'تم كشف الزعيم. أصبح أمر الاغتيال متاحاً الآن.':'ليس زعيماً. يمكنك استبعاده من قائمة الخصم.'}</p></div><div className="decision-actions">{selected.isBoss?<button className="danger-button" onClick={()=>act('assassinate')}><Crosshair /> اغتيال الزعيم</button>:<button className="primary-button" onClick={()=>act('exclude')}><UserRound /> استبعاد اللاعب</button>}</div></>}
+    {game.phase==='reveal'&&selected&&<><div className={`reveal-result ${selected.isBoss?'is-boss':''}`}><div className="result-symbol">{selected.isBoss?<Skull />:<UserRound />}</div><span>تم كشف</span><h2>{selected.name}</h2><strong>{selected.isBoss?'زعيم عصابة':'لاعب عادي'}</strong><p>{selected.isBoss?'تم كشف الزعيم. اختر لاعبين عاديين لاستبعادهما، أو اغتل الزعيم مباشرة.':'ليس زعيماً. يمكنك استبعاده من قائمة الخصم.'}</p></div><div className="decision-actions">{selected.isBoss?<><div className="exclusion-picker"><strong>استبعاد لاعبين: {game.exclusionTargets.length}/2</strong><div className="footballer-grid compact-grid">{game.teams[game.targetTeam!].footballers.map((player,index)=>player.status==='active'&&!player.isBoss&&<button key={index} className={`footballer-card ${game.exclusionTargets.includes(index)?'selected':''}`} onClick={()=>toggleExclusionTarget(index)}><UserRound /><strong>{player.name}</strong><span>{game.exclusionTargets.includes(index)?'سيتم استبعاده':'اختيار'}</span></button>)}</div></div><button className="primary-button" disabled={game.exclusionTargets.length!==2} onClick={()=>act('exclude')}><UserRound /> استبعاد لاعبين</button><button className="danger-button" onClick={()=>act('assassinate')}><Crosshair /> اغتيال الزعيم</button></>:<button className="primary-button" onClick={()=>act('exclude')}><UserRound /> استبعاد اللاعب</button>}</div></>}
   </section><aside className="game-sidebar"><TeamStatus teams={game.teams} turn={game.turn} history={game.history} onReset={onReset}/>{cards.length > 0 && <section className="paper-card cards-panel"><div className="card-heading"><div><h2>كروت المساعدة</h2><p>كرت واحد في كل دور.</p></div><Shield /></div><div className="card-list">{cards.map(card => <button className="player-row" key={card.id} disabled={Boolean(card.usedAt)} onClick={() => useCard(card.id)}><span>{card.cardType}</span><span className="status-tag target">{card.usedAt?'مستخدم':'استخدم'}</span></button>)}</div></section>}</aside></div></motion.main>;
 }
 
