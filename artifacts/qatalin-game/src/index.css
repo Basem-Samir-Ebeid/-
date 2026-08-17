@@ -99,6 +99,11 @@ button { cursor: pointer; }
   display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 8px;
 }
 .utility-button:hover { color: hsl(var(--accent)); }
+.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.exit-button { color: hsl(var(--primary)); border: 1px solid rgba(203,47,44,.28); padding-inline: 12px; }
+.exit-button:hover { color: hsl(var(--foreground)); background: rgba(203,47,44,.14); border-color: hsl(var(--primary)); }
+.secondary-button { min-height: 50px; padding: 0 25px; border-radius: 4px; border: 1px solid rgba(219,167,79,.58); color: hsl(var(--accent)); background: rgba(219,167,79,.08); font-weight: 700; display: inline-flex; justify-content: center; align-items: center; gap: 10px; transition: transform .2s, background-color .2s, border-color .2s; }
+.secondary-button:hover { transform: translateY(-2px); background: rgba(219,167,79,.16); border-color: hsl(var(--accent)); }
 .eyebrow {
   color: hsl(var(--accent)); font-size: 11px; font-weight: 700; letter-spacing: .18em;
   text-transform: uppercase; display: flex; align-items: center; gap: 10px;

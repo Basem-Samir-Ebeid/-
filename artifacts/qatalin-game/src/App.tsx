@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, Check, CircleHelp, Crosshair, Eye, FileWarning, Flag, RotateCcw, Shield, Skull, Target, UserRound, UsersRound } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, CircleHelp, Crosshair, Eye, FileWarning, Flag, LogOut, RotateCcw, Shield, Skull, Target, UserRound, UsersRound } from 'lucide-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -52,11 +52,12 @@ function App() {
     if (game.setupIndex === game.playerCount - 1) setGame({ ...game, screen: 'game', phase: 'question', teams, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, winner: null, history: [] });
     else { update({ teams, setupIndex: game.setupIndex + 1 }); setDraft(emptyFootballers()); }
   };
-  const reset = () => { if (window.confirm('هل تريد بدء غرفة جديدة؟')) { window.localStorage.removeItem(STORAGE_KEY); setGame(initialState()); setDraft(emptyFootballers()); } };
+  const reset = () => { if (window.confirm('هل تريد بدء غرفة جديدة؟ سيتم مسح تقدم الغرفة الحالية.')) { window.localStorage.removeItem(STORAGE_KEY); setGame(initialState()); setDraft(emptyFootballers()); } };
+  const exit = () => { if (window.confirm('هل تريد الخروج والعودة إلى الصفحة الرئيسية؟')) { window.localStorage.removeItem(STORAGE_KEY); setGame(initialState()); setDraft(emptyFootballers()); } };
   return <div className="game-shell" dir="rtl"><div className="frame">
-    <header className="topbar"><div className="brand-lockup"><div className="brand-mark"><Crosshair size={19} /></div><div><span className="brand-name">عصابة الملاعب</span><span className="brand-sub">ملف الزعماء السري</span></div></div><button className="utility-button" onClick={() => setShowRules(true)}><FileWarning size={15} /> قواعد اللعبة</button></header>
+    <header className="topbar"><div className="brand-lockup"><div className="brand-mark"><Crosshair size={19} /></div><div><span className="brand-name">عصابة الملاعب</span><span className="brand-sub">ملف الزعماء السري</span></div></div><div className="topbar-actions"><button className="utility-button" onClick={() => setShowRules(true)}><FileWarning size={15} /> قواعد اللعبة</button>{game.screen !== 'intro' && <button className="utility-button exit-button" onClick={exit}><LogOut size={15} /> خروج</button>}</div></header>
     <AnimatePresence mode="wait">
-      {game.screen === 'intro' && <IntroView onStart={() => update({ screen: 'room' })} onRules={() => setShowRules(true)} />}
+      {game.screen === 'intro' && <IntroView onStart={() => update({ screen: 'room' })} onLocal={() => update({ screen: 'teams', onlineRoomCode: undefined, onlinePlayerId: undefined, teams: [], setupIndex: 0, round: 1, turn: 0, winner: null, history: [] })} onRules={() => setShowRules(true)} />}
       {game.screen === 'room' && <RoomSetup game={game} setCount={setCount} update={update} onBack={() => update({ screen: 'intro' })} onContinue={beginTeams} />}
       {game.screen === 'teams' && <TeamSetup game={game} draft={draft} setDraft={setDraft} onSave={saveTeam} onBack={() => game.setupIndex === 0 ? update({ screen: 'room' }) : undefined} />}
       {game.screen === 'game' && <GameView game={game} setGame={setGame} onReset={reset} />}
@@ -65,8 +66,8 @@ function App() {
   </div>{showRules && <RulesModal onClose={() => setShowRules(false)} />}</div>;
 }
 
-function IntroView({ onStart, onRules }: { onStart: () => void; onRules: () => void }) {
-  return <motion.main className="intro-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><section className="hero"><div className="hero-copy"><div className="eyebrow">مواجهة فرق — سري للغاية</div><h1 className="hero-title">عصابة<em>الملاعب</em></h1><p className="hero-lede">كل لاعب يبني فريقاً من 10 نجوم كرة قدم ويخفي بينهم زعيمين للعصابة. اسأل، راقب، ثم اكشف فريق خصمك واستبعد رجاله أو اغتل زعماءه.</p><div className="hero-actions"><button className="primary-button" onClick={onStart}>أنشئ الغرفة <ArrowLeft size={17} /></button><button className="ghost-button" onClick={onRules}>كيف نلعب؟ <CircleHelp size={17} /></button></div><div className="hero-note"><UsersRound size={14} /> من 2 إلى 15 لاعباً حقيقياً · 10 نجوم لكل فريق</div></div><div className="hero-art"><img src={referenceArtwork} alt="ملف عصابة الملاعب الفني" /><div className="art-stamp">تشكيلة سرية / ممنوع الكشف</div></div></section><section className="intro-rules"><div className="eyebrow">خطة المواجهة</div><h2 className="section-title">كوّن فريقك. أخفِ زعماءك.</h2><div className="rules-grid">{[['01','ابنِ التشكيلة','سمّ 10 لاعبي كرة في فريقك وحدد اثنين فقط كزعيمي العصابة.'],['02','حقق مع الخصم','في دورك ناقش سؤال الجولة ثم اختر لاعباً من فريق خصمك لكشفه.'],['03','احسم المصير','استبعد اللاعب العادي، وإذا اكتشفت زعيماً افتح أمر الاغتيال.']].map(([n,t,b]) => <article className="rule-card" key={n}><div className="rule-number">{n}</div><h3>{t}</h3><p>{b}</p></article>)}</div></section></motion.main>;
+function IntroView({ onStart, onLocal, onRules }: { onStart: () => void; onLocal: () => void; onRules: () => void }) {
+  return <motion.main className="intro-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><section className="hero"><div className="hero-copy"><div className="eyebrow">مواجهة فرق — سري للغاية</div><h1 className="hero-title">عصابة<em>الملاعب</em></h1><p className="hero-lede">كل لاعب يبني فريقاً من 10 نجوم كرة قدم ويخفي بينهم زعيمين للعصابة. اسأل، راقب، ثم اكشف فريق خصمك واستبعد رجاله أو اغتل زعماءه.</p><div className="hero-actions"><button className="primary-button" onClick={onStart}>أنشئ غرفة أونلاين <ArrowLeft size={17} /></button><button className="secondary-button" onClick={onLocal}>تجربة محلية <UsersRound size={17} /></button><button className="ghost-button" onClick={onRules}>كيف نلعب؟ <CircleHelp size={17} /></button></div><div className="hero-note"><UsersRound size={14} /> من 2 إلى 15 لاعباً حقيقياً · 10 نجوم لكل فريق</div></div><div className="hero-art"><img src={referenceArtwork} alt="ملف عصابة الملاعب الفني" /><div className="art-stamp">تشكيلة سرية / ممنوع الكشف</div></div></section><section className="intro-rules"><div className="eyebrow">خطة المواجهة</div><h2 className="section-title">كوّن فريقك. أخفِ زعماءك.</h2><div className="rules-grid">{[['01','ابنِ التشكيلة','سمّ 10 لاعبي كرة في فريقك وحدد اثنين فقط كزعيمي العصابة.'],['02','حقق مع الخصم','في دورك ناقش سؤال الجولة ثم اختر لاعباً من فريق خصمك لكشفه.'],['03','احسم المصير','استبعد اللاعب العادي، وإذا اكتشفت زعيماً افتح أمر الاغ��يال.']].map(([n,t,b]) => <article className="rule-card" key={n}><div className="rule-number">{n}</div><h3>{t}</h3><p>{b}</p></article>)}</div></section></motion.main>;
 }
 
 function RoomSetup({ game, setCount, update, onBack, onContinue }: { game: GameState; setCount: (n:number)=>void; update:(c:Partial<GameState>)=>void; onBack:()=>void; onContinue:()=>void }) {
