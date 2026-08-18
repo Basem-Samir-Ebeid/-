@@ -11,7 +11,7 @@ import NotFound from '@/legacy/not-found';
 import { Route, Switch, useLocation, Router as WouterRouter } from 'wouter';
 const referenceArtwork = '/game-artwork.jpg';
 
-type Screen = 'intro' | 'room' | 'teams' | 'game';
+type Screen = 'intro' | 'room' | 'local-setup' | 'teams' | 'game';
 type Phase = 'question' | 'target' | 'reveal' | 'ending';
 type Footballer = { name: string; isBoss: boolean; status: 'active' | 'excluded' | 'assassinated'; revealed: boolean };
 type Team = { owner: string; footballers: Footballer[] };
@@ -57,8 +57,9 @@ function App() {
   return <div className="game-shell" dir="rtl"><div className="frame">
     <header className="topbar"><div className="brand-lockup"><div className="brand-mark"><Crosshair size={19} /></div><div><span className="brand-name">عصابة الملاعب</span><span className="brand-sub">ملف الزعماء السري</span></div></div><div className="topbar-actions"><button className="utility-button" onClick={() => setShowRules(true)}><FileWarning size={15} /> قواعد اللعبة</button>{game.screen !== 'intro' && <button className="utility-button exit-button" onClick={exit}><LogOut size={15} /> خروج</button>}</div></header>
     <AnimatePresence mode="wait">
-      {game.screen === 'intro' && <IntroView onStart={() => update({ screen: 'room' })} onLocal={() => update({ screen: 'teams', onlineRoomCode: undefined, onlinePlayerId: undefined, teams: [], setupIndex: 0, round: 1, turn: 0, winner: null, history: [] })} onRules={() => setShowRules(true)} />}
+      {game.screen === 'intro' && <IntroView onStart={() => update({ screen: 'room' })} onLocal={() => update({ screen: 'local-setup', onlineRoomCode: undefined, onlinePlayerId: undefined, teams: [], setupIndex: 0, round: 1, turn: 0, winner: null, history: [] })} onRules={() => setShowRules(true)} />}
       {game.screen === 'room' && <RoomSetup game={game} setCount={setCount} update={update} onBack={() => update({ screen: 'intro' })} onContinue={beginTeams} />}
+      {game.screen === 'local-setup' && <LocalSetup game={game} setCount={setCount} update={update} onBack={() => update({ screen: 'intro' })} onContinue={beginTeams} />}
       {game.screen === 'teams' && <TeamSetup game={game} draft={draft} setDraft={setDraft} onSave={saveTeam} onBack={() => game.setupIndex === 0 ? update({ screen: 'room' }) : undefined} />}
       {game.screen === 'game' && <GameView game={game} setGame={setGame} onReset={reset} />}
     </AnimatePresence>
@@ -68,6 +69,10 @@ function App() {
 
 function IntroView({ onStart, onLocal, onRules }: { onStart: () => void; onLocal: () => void; onRules: () => void }) {
   return <motion.main className="intro-page" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}><section className="hero"><div className="hero-copy"><div className="eyebrow">مواجهة فرق — سري للغاية</div><h1 className="hero-title">عصابة<em>الملاعب</em></h1><p className="hero-lede">كل لاعب يبني فريقاً من 10 نجوم كرة قدم ويخفي بينهم زعيمين للعصابة. اسأل، راقب، ثم اكشف فريق خصمك واستبعد رجاله أو اغتل زعماءه.</p><div className="hero-actions"><button className="primary-button" onClick={onStart}>أنشئ غرفة أونلاين <ArrowLeft size={17} /></button><button className="secondary-button" onClick={onLocal}>تجربة محلية <UsersRound size={17} /></button><button className="ghost-button" onClick={onRules}>كيف نلعب؟ <CircleHelp size={17} /></button></div><div className="hero-note"><UsersRound size={14} /> من 2 إ��ى 15 لاعباً حقيقياً · 10 نجوم لكل فريق</div></div><div className="hero-art"><img src={referenceArtwork} alt="ملف عصابة الملاعب الفني" /><div className="art-stamp">تشكيلة سرية / ممنوع الكشف</div></div></section><section className="intro-rules"><div className="eyebrow">خطة المواجهة</div><h2 className="section-title">كوّن فريقك. أخفِ زعماءك.</h2><div className="rules-grid">{[['01','ابنِ التشكيلة','سمّ 10 لاعبي كرة في فريقك وحدد اثنين فقط كزعيمي العصابة.'],['02','حقق مع الخصم','في دورك ناقش سؤال الجولة ثم اختر لاعباً من فريق خصمك لكشفه.'],['03','احسم المصير','استبعد اللاعب العادي، وإذا اكتشفت زعيماً افتح أمر الاغ��يال.']].map(([n,t,b]) => <article className="rule-card" key={n}><div className="rule-number">{n}</div><h3>{t}</h3><p>{b}</p></article>)}</div></section></motion.main>;
+}
+
+function LocalSetup({ game, setCount, update, onBack, onContinue }: { game: GameState; setCount: (n:number)=>void; update:(c:Partial<GameState>)=>void; onBack:()=>void; onContinue:()=>void }) {
+  return <motion.main className="setup-wrap local-setup-page" initial={{opacity:0,x:20}} animate={{opacity:1,x:0}}><div className="eyebrow">إعداد سريع</div><div className="game-header"><div><h1>تجربة محلية</h1><p className="section-desc">للتجربة على جهاز واحد، من 2 إلى 15 لاعباً.</p></div><UsersRound /></div><section className="paper-card local-card"><div className="card-heading"><div><h2>عدد اللاعبين</h2><p>اختر عدد المشاركين ثم اكتب أسماءهم.</p></div><UsersRound /></div><div className="count-grid compact">{Array.from({length:14},(_,i)=>i+2).map(count=><button key={count} className={`count-button ${game.playerCount===count?'active':''}`} onClick={()=>setCount(count)}>{count}</button>)}</div><div className="local-names">{game.owners.map((owner,index)=><label className="name-field" key={index}><span className="name-index">{index+1}</span><input className="text-input" value={owner} onChange={e=>update({owners:game.owners.map((name,i)=>i===index?e.target.value:name)})} placeholder={`اسم اللاعب ${index+1}`} /></label>)}</div><div className="setup-footer local-footer"><button className="utility-button" onClick={onBack}><ArrowRight /> رجوع</button><button className="primary-button" onClick={onContinue} disabled={game.owners.some(name=>!name.trim())}>تجهيز الفرق <ArrowLeft /></button></div></section></motion.main>;
 }
 
 function RoomSetup({ game, setCount, update, onBack, onContinue }: { game: GameState; setCount: (n:number)=>void; update:(c:Partial<GameState>)=>void; onBack:()=>void; onContinue:()=>void }) {
