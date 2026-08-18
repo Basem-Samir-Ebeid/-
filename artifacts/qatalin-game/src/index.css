@@ -263,6 +263,19 @@ button { cursor: pointer; }
 .modal-list li { padding: 9px 0 9px 6px; border-bottom: 1px solid rgba(207,169,105,.12); }
 .modal-list strong { color: hsl(var(--foreground)); }
 .count-grid.compact { grid-template-columns: repeat(5, 1fr); }
+.local-setup-page { max-width: 760px; margin-inline: auto; }
+.local-card { background: linear-gradient(145deg, rgba(57,47,39,.55), rgba(20,18,18,.8)); }
+.local-card .card-heading { margin-bottom: 24px; }
+.local-card .card-heading h2 { font-size: clamp(30px, 6vw, 48px); }
+.local-card .card-heading p { font-size: 16px; }
+.local-card .count-grid { gap: 10px; margin-bottom: 22px; }
+.local-card .count-button { min-height: 64px; font-size: 24px; border-color: rgba(207,169,105,.25); background: rgba(0,0,0,.16); }
+.local-card .count-button.active { color: hsl(var(--foreground)); border-color: hsl(var(--primary)); background: rgba(203,47,44,.22); box-shadow: 0 0 0 1px hsl(var(--primary)); }
+.local-names { display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow: auto; padding: 4px 0; }
+.local-names .name-field { grid-template-columns: 28px minmax(0,1fr); }
+.local-names .text-input { min-height: 58px; font-size: 20px; }
+.local-footer { margin-top: 24px; }
+.local-footer .primary-button { min-height: 58px; flex: 1; font-size: 18px; }
 .squad-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .squad-edit { display: grid; grid-template-columns: 26px minmax(0, 1fr) 84px; align-items: center; gap: 8px; padding: 7px; border: 1px solid rgba(207,169,105,.14); background: rgba(0,0,0,.16); }
 .squad-edit.boss-picked { border-color: hsl(var(--primary)); background: rgba(203,47,44,.11); }
