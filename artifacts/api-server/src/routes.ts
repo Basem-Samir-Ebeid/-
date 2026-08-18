@@ -6,6 +6,7 @@ import { gameCards, gameEvents, gamePlayers, gameRooms, gameRosters } from "../.
 const router = Router();
 const cardTypes = ["double-shot", "silencer", "shield", "informant", "swap", "camera"];
 const code = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+const normalizeCode = (value: unknown) => String(value ?? '').trim().toUpperCase();
 
 router.get("/health", (_req, res) => res.json({ ok: true, service: "qatalin-game" }));
 
@@ -21,7 +22,9 @@ router.post("/rooms", async (req, res) => {
 router.post("/rooms/:roomCode/join", async (req, res) => {
   const displayName = String(req.body?.displayName ?? "").trim();
   const teamName = String(req.body?.teamName ?? "").trim();
-  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, req.params.roomCode.toUpperCase()));
+  const roomCode = normalizeCode(req.params.roomCode);
+  if (!/^[A-Z0-9]{6}$/.test(roomCode)) return res.status(400).json({ message: "كود الغرفة غير صالح" });
+  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, roomCode));
   if (!room) return res.status(404).json({ message: "الغرفة غير موجودة" });
   if (!displayName || !teamName) return res.status(400).json({ message: "اسم اللاعب والفريق مطلوبان" });
   const existingPlayers = await db.select({ id: gamePlayers.id }).from(gamePlayers).where(eq(gamePlayers.roomId, room.id));
@@ -32,7 +35,9 @@ router.post("/rooms/:roomCode/join", async (req, res) => {
 });
 
 router.get("/rooms/:roomCode", async (req, res) => {
-  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, req.params.roomCode.toUpperCase()));
+  const roomCode = normalizeCode(req.params.roomCode);
+  if (!/^[A-Z0-9]{6}$/.test(roomCode)) return res.status(400).json({ message: "كود الغرفة غير صالح" });
+  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, roomCode));
   if (!room) return res.status(404).json({ message: "الغرفة غير موجودة" });
   const players = await db.select({ id: gamePlayers.id, displayName: gamePlayers.displayName, teamName: gamePlayers.teamName, isReady: gamePlayers.isReady }).from(gamePlayers).where(eq(gamePlayers.roomId, room.id)).orderBy(asc(gamePlayers.joinedAt));
   return res.json({ room: { code: room.code, status: room.status, phase: room.phase, round: room.round }, players });
@@ -40,7 +45,9 @@ router.get("/rooms/:roomCode", async (req, res) => {
 
 router.post("/rooms/:roomCode/ready", async (req, res) => {
   const playerId = String(req.body?.playerId ?? "");
-  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, req.params.roomCode.toUpperCase()));
+  const roomCode = normalizeCode(req.params.roomCode);
+  if (!/^[A-Z0-9]{6}$/.test(roomCode)) return res.status(400).json({ message: "كود الغرفة غير صالح" });
+  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, roomCode));
   if (!room) return res.status(404).json({ message: "الغرفة غير موجودة" });
   await db.update(gamePlayers).set({ isReady: true }).where(and(eq(gamePlayers.id, playerId), eq(gamePlayers.roomId, room.id)));
   const players = await db.select().from(gamePlayers).where(eq(gamePlayers.roomId, room.id));
@@ -50,7 +57,7 @@ router.post("/rooms/:roomCode/ready", async (req, res) => {
 
 router.post("/rooms/:roomCode/roster", async (req, res) => {
   const playerId = String(req.body?.playerId ?? "");
-  const roster = Array.isArray(req.body?.roster) ? req.body.roster : [];
+  const roster: Array<{ name: string; position?: string; isBoss?: boolean }> = Array.isArray(req.body?.roster) ? req.body.roster : [];
   if (roster.length !== 10 || roster.filter((p: { isBoss?: boolean }) => p.isBoss).length !== 2) return res.status(400).json({ message: "يجب إدخال 10 لاعبين وزعيمين فقط" });
   await db.delete(gameRosters).where(eq(gameRosters.playerId, playerId));
   await db.insert(gameRosters).values(roster.map((p: { name: string; position?: string; isBoss: boolean }, index: number) => ({ playerId, slot: index + 1, footballerName: String(p.name).trim(), position: String(p.position ?? "غير محدد"), isBoss: Boolean(p.isBoss) })));
@@ -59,7 +66,9 @@ router.post("/rooms/:roomCode/roster", async (req, res) => {
 });
 
 router.get("/rooms/:roomCode/cards/:playerId", async (req, res) => {
-  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, req.params.roomCode.toUpperCase()));
+  const roomCode = normalizeCode(req.params.roomCode);
+  if (!/^[A-Z0-9]{6}$/.test(roomCode)) return res.status(400).json({ message: "كود الغرفة غير صالح" });
+  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, roomCode));
   if (!room) return res.status(404).json({ message: "الغرفة غير موجودة" });
   const cards = await db.select({ id: gameCards.id, cardType: gameCards.cardType, usedAt: gameCards.usedAt }).from(gameCards).where(eq(gameCards.playerId, req.params.playerId));
   return res.json({ cards });
@@ -74,7 +83,9 @@ router.post("/rooms/:roomCode/cards/:cardId/use", async (req, res) => {
 });
 
 router.post("/rooms/:roomCode/events", async (req, res) => {
-  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, req.params.roomCode.toUpperCase()));
+  const roomCode = normalizeCode(req.params.roomCode);
+  if (!/^[A-Z0-9]{6}$/.test(roomCode)) return res.status(400).json({ message: "كود الغرفة غير صالح" });
+  const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, roomCode));
   if (!room) return res.status(404).json({ message: "الغرفة غير موجودة" });
   const actorId = String(req.body?.actorId ?? "");
   const eventType = String(req.body?.eventType ?? "question");
