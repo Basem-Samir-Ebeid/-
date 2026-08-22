@@ -75,6 +75,9 @@
     "zod": "catalog:"
   },
   "dependencies": {
-    "next": "16.3.1"
+    "@aws-sdk/rds-signer": "^3.1115.0",
+    "@vercel/functions": "^3.9.5",
+    "next": "16.3.1",
+    "pg": "^8.22.0"
   }
 }
