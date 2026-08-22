@@ -26,6 +26,44 @@ attachDatabasePool(pool)
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status })
 const code = () => Math.random().toString(36).slice(2, 8).toUpperCase()
 const clean = (value: unknown) => String(value ?? '').trim()
+let schemaReady: Promise<void> | undefined
+
+async function ensureSchema() {
+  if (!schemaReady) {
+    schemaReady = (async () => {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS game_rooms (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          code varchar(8) NOT NULL UNIQUE,
+          status varchar(16) NOT NULL DEFAULT 'lobby',
+          phase varchar(16) NOT NULL DEFAULT 'setup',
+          round integer NOT NULL DEFAULT 0,
+          current_player_id uuid,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS game_players (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          room_id uuid NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE,
+          display_name varchar(80) NOT NULL,
+          team_name varchar(80) NOT NULL,
+          is_ready boolean NOT NULL DEFAULT false,
+          joined_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS game_players_room_id_idx ON game_players(room_id);
+        CREATE TABLE IF NOT EXISTS game_events (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          room_id uuid NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE,
+          actor_id uuid,
+          target_id uuid,
+          event_type varchar(32) NOT NULL,
+          payload jsonb NOT NULL DEFAULT '{}'::jsonb,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+      `)
+    })().catch((error) => { schemaReady = undefined; throw error })
+  }
+  await schemaReady
+}
 
 async function resolveRoom(roomCode: string) {
   const result = await pool.query('SELECT * FROM game_rooms WHERE code = $1 LIMIT 1', [roomCode.toUpperCase()])
@@ -39,6 +77,7 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
   try {
     if (path[0] === 'health' && method === 'GET') return json({ ok: true, service: 'qatalin-game' })
     if (path[0] !== 'rooms') return json({ message: 'المسار غير موجود' }, 404)
+    await ensureSchema()
 
     if (path.length === 1 && method === 'POST') {
       const displayName = clean(body.displayName)
