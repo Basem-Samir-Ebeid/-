@@ -48,6 +48,7 @@ function App() {
   const [game, setGame] = useState<GameState>(readSavedGame);
   const [draft, setDraft] = useState<Footballer[]>(emptyFootballers);
   const [showRules, setShowRules] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(game)); }, [game]);
   const update = (changes: Partial<GameState>) => setGame((current) => ({ ...current, ...changes }));
   const setCount = (count: number) => update({ playerCount: count, owners: Array.from({ length: count }, (_, i) => game.owners[i] ?? ownerDefaults[i] ?? `لاعب ${i + 1}`) });
@@ -62,7 +63,8 @@ function App() {
     else { update({ teams, setupIndex: game.setupIndex + 1 }); setDraft(emptyFootballers()); }
   };
   const reset = () => { if (window.confirm('هل تريد بدء غرفة جديدة؟ سيتم مسح تقدم الغرفة الحالية.')) { window.localStorage.removeItem(STORAGE_KEY); setGame(initialState()); setDraft(emptyFootballers()); } };
-  const exit = () => { if (window.confirm('هل تريد الخروج والعودة إلى الصفحة الرئيسية؟')) { window.localStorage.removeItem(STORAGE_KEY); setGame(initialState()); setDraft(emptyFootballers()); } };
+  const exit = () => setShowExitConfirm(true);
+  const confirmExit = () => { window.localStorage.removeItem(STORAGE_KEY); setGame(initialState()); setDraft(emptyFootballers()); setShowExitConfirm(false); };
   return <div className="game-shell" dir="rtl"><div className="frame">
     <header className="topbar"><div className="brand-lockup"><div className="brand-mark"><Crosshair size={19} /></div><div><span className="brand-name">عصابة الملاعب</span><span className="brand-sub">ملف الزعماء السري</span></div></div><div className="topbar-actions"><button className="utility-button" onClick={() => setShowRules(true)}><FileWarning size={15} /> قواعد اللعبة</button>{game.screen !== 'intro' && <button className="utility-button exit-button" onClick={exit}><LogOut size={15} /> خروج</button>}</div></header>
     <AnimatePresence mode="wait">
@@ -73,7 +75,7 @@ function App() {
       {game.screen === 'game' && <GameView game={game} setGame={setGame} onReset={reset} />}
     </AnimatePresence>
     <footer className="footer-note">عصابة الملاعب — اكشف الزعيم قبل أن يختفي الدليل</footer>
-  </div>{showRules && <RulesModal onClose={() => setShowRules(false)} />}</div>;
+  </div>{showRules && <RulesModal onClose={() => setShowRules(false)} />}{showExitConfirm && <ExitConfirmModal onCancel={() => setShowExitConfirm(false)} onConfirm={confirmExit} />}</div>;
 }
 
 function IntroView({ onStart, onLocal, onRules }: { onStart: () => void; onLocal: () => void; onRules: () => void }) {
@@ -179,6 +181,8 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
 function TeamStatus({teams,turn,history,onReset}:{teams:Team[];turn:number;history:HistoryItem[];onReset:()=>void}) { return <aside className="paper-card players-card"><div className="card-heading"><div><h2>حالة الفرق</h2><p>سجل القوة المتبقية.</p></div><Flag /></div><div className="team-status-list">{teams.map((team,i)=>{const bosses=team.footballers.filter(p=>p.isBoss&&p.status!=='assassinated').length;return <div className={`team-status ${i===turn?'current':''}`} key={i}><div><strong>{team.owner}</strong><span>{team.footballers.filter(p=>p.status==='active').length} لاعبين متاحين</span></div><div className="boss-lives"><Skull /> {bosses}/2</div></div>})}</div>{history.length>0&&<div className="history-panel"><h3>آخر العمليات</h3>{history.slice(-3).reverse().map((h,i)=><p key={i}><strong>{h.attacker}</strong> {h.action==='assassinate'?'اغتال':'استبعد'} {h.target}</p>)}</div>}<button className="utility-button action-gap" onClick={onReset}><RotateCcw /> غرفة جديدة</button></aside> }
 
 function EndingView({game,onReset}:{game:GameState;onReset:()=>void}) { const winner=game.winner===null?null:game.teams[game.winner]; return <motion.main className="game-wrap" initial={{opacity:0}} animate={{opacity:1}}><section className="paper-card result-hero"><div className="result-symbol"><Shield /></div><div className="eyebrow centered">انتهت المواجهة</div><h1>فريق {winner?.owner} انتصر</h1><p>بقي لهذا الفريق زعيم واحد على الأقل، بينما تم اغتيال زعماء كل الفرق المنافسة.</p><div className="winner-squad">{winner?.footballers.filter(p=>p.isBoss).map(p=><div className="player-row" key={p.name}><span>{p.name}</span><span className="status-tag target">{p.status==='assassinated'?'مغتال':'زعيم ناجٍ'}</span></div>)}</div><button className="primary-button" onClick={onReset}><RotateCcw /> افتح غرفة جديدة</button></section></motion.main> }
+
+function ExitConfirmModal({onCancel,onConfirm}:{onCancel:()=>void;onConfirm:()=>void}) { return <motion.div className="modal-backdrop exit-backdrop" initial={{opacity:0}} animate={{opacity:1}} onClick={onCancel}><motion.div className="paper-card exit-modal" role="dialog" aria-modal="true" aria-labelledby="exit-title" onClick={e=>e.stopPropagation()} initial={{opacity:0,y:18,scale:.96}} animate={{opacity:1,y:0,scale:1}}><div className="exit-modal-icon"><LogOut size={22} /></div><div className="eyebrow centered">تأكيد الخروج</div><h2 id="exit-title">هل تريد مغادرة اللعبة؟</h2><p>سيتم حذف تقدم الغرفة الحالية والعودة إلى الصفحة الرئيسية. لا يمكن التراجع عن هذا الإجراء.</p><div className="exit-actions"><button className="utility-button" onClick={onCancel}>البقاء في اللعبة</button><button className="danger-button" onClick={onConfirm}><LogOut size={16} /> خروج وحذف التقدم</button></div></motion.div></motion.div> }
 
 function RulesModal({onClose}:{onClose:()=>void}) { return <motion.div className="modal-backdrop" initial={{opacity:0}} animate={{opacity:1}} onClick={onClose}><motion.div className="paper-card rules-modal" role="dialog" aria-modal="true" aria-labelledby="rules-title" onClick={e=>e.stopPropagation()}><div className="card-heading"><div><div className="eyebrow">دليل اللعب</div><h2 id="rules-title">قواعد عصابة الملاعب</h2></div><button className="utility-button" onClick={onClose}>إغلاق</button></div><ol className="modal-list"><li><strong>كل لاعب حقيقي</strong> ينشئ فريقاً مستقلاً من 10 لاعبي كرة.</li><li>يختار صاحب الفريق <strong>زعيمين فقط</strong> يظلان سريين.</li><li>في كل جولة يجيب اللاعبون عن سؤال، ثم يختار صاحب الدور هدفاً من فريق خصم.</li><li>يتم كشف هوية الهدف: اللاعب العادي يُستبعد، والزعيم المكشوف يمكن اغتياله.</li><li>يفوز آخر فريق يبقى لديه زعيم عصابة حي.</li></ol></motion.div></motion.div> }
 

@@ -44,6 +44,7 @@
 
 * { box-sizing: border-box; }
 html, body, #root { min-height: 100%; margin: 0; }
+html { background: hsl(var(--background)); }
 body {
   background: hsl(var(--background));
   color: hsl(var(--foreground));
@@ -327,6 +328,14 @@ button { cursor: pointer; }
 .card-detail { padding: 14px; border: 1px solid hsl(var(--accent)); background: rgba(219,167,79,.08); }
 .card-detail p { margin: 7px 0 12px; color: hsl(var(--muted-foreground)); font-size: 12px; line-height: 1.6; }
 button:disabled { cursor: not-allowed; opacity: .42; }
+.exit-backdrop { background: rgba(4, 5, 8, .78); }
+.exit-modal { width: min(460px, 100%); padding: 30px; text-align: center; border-color: rgba(203,47,44,.5); box-shadow: 0 24px 70px rgba(0,0,0,.45); }
+.exit-modal-icon { width: 56px; height: 56px; margin: 0 auto 16px; display: grid; place-items: center; color: hsl(var(--primary)); border: 1px solid rgba(203,47,44,.6); background: rgba(203,47,44,.12); border-radius: 50%; }
+.exit-modal h2 { margin: 12px 0 10px; color: hsl(var(--foreground)); font-family: var(--app-font-serif); font-size: 28px; }
+.exit-modal p { margin: 0 auto; max-width: 340px; color: hsl(var(--muted-foreground)); font-size: 13px; line-height: 1.9; }
+.exit-actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 24px; }
+.exit-actions .utility-button { min-height: 48px; padding-inline: 18px; border: 1px solid rgba(207,169,105,.28); color: hsl(var(--foreground)); }
+.exit-actions .danger-button { min-height: 48px; padding-inline: 18px; }
 
 @media (max-width: 820px) {
   .hero { grid-template-columns: 1fr; gap: 45px; padding-top: 48px; }
