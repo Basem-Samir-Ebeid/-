@@ -50,6 +50,7 @@ function App() {
   const [showRules, setShowRules] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   useEffect(() => { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(game)); }, [game]);
+  useEffect(() => { if (!showExitConfirm) return; const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setShowExitConfirm(false); }; window.addEventListener('keydown', onKeyDown); return () => window.removeEventListener('keydown', onKeyDown); }, [showExitConfirm]);
   const update = (changes: Partial<GameState>) => setGame((current) => ({ ...current, ...changes }));
   const setCount = (count: number) => update({ playerCount: count, owners: Array.from({ length: count }, (_, i) => game.owners[i] ?? ownerDefaults[i] ?? `لاعب ${i + 1}`) });
   const beginTeams = () => update({ screen: 'teams', setupIndex: 0, teams: [] });

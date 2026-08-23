@@ -44,9 +44,10 @@
 
 * { box-sizing: border-box; }
 html, body, #root { min-height: 100%; margin: 0; }
-html { background: hsl(var(--background)); }
+html { background: hsl(var(--background)) !important; color-scheme: dark; }
 body {
-  background: hsl(var(--background));
+  min-width: 320px;
+  background: hsl(var(--background)) !important;
   color: hsl(var(--foreground));
   font-family: var(--app-font-sans);
   direction: rtl;
@@ -346,8 +347,11 @@ button:disabled { cursor: not-allowed; opacity: .42; }
   .setup-layout, .phase-layout { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
-  .frame { width: min(100% - 26px, 1120px); }
-  .topbar { height: 65px; }
+  .frame { width: calc(100% - 28px); }
+  .topbar { height: auto; min-height: 65px; padding: 12px 0; gap: 10px; align-items: flex-start; }
+  .topbar-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .brand-name { font-size: 16px; }
+  .utility-button { font-size: 11px; padding: 7px 6px; }
   .brand-sub { display: none; }
   .hero { min-height: auto; padding: 42px 0 60px; }
   .hero-title { font-size: 80px; }
@@ -364,4 +368,9 @@ button:disabled { cursor: not-allowed; opacity: .42; }
   .squad-edit { grid-template-columns: 22px minmax(0, 1fr) 74px; }
   .boss-toggle span { display: none; }
   .turn-banner { align-items: flex-start; }
+  .modal-backdrop { padding: 14px; }
+  .exit-modal { padding: 25px 18px; }
+  .exit-modal h2 { font-size: 24px; }
+  .exit-actions { flex-direction: column-reverse; }
+  .exit-actions button { width: 100%; }
 }
