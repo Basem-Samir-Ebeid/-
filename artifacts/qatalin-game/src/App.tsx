@@ -96,7 +96,7 @@ function RoomSetup({ game, setCount, update, onBack, onContinue }: { game: GameS
   const [onlinePlayers, setOnlinePlayers] = useState<{displayName:string;teamName:string;isReady:boolean}[]>([]);
   const [onlineMode, setOnlineMode] = useState<'idle'|'lobby'>('idle');
   const [onlineError, setOnlineError] = useState('');
-  const api = (process.env.NEXT_PUBLIC_API_URL ?? '/api').replace(/\/$/, '');
+  const api = '/api';
   const requestJson = async (url: string, init?: RequestInit) => {
     const response = await fetch(url, { ...init, headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) } });
     const data = await response.json().catch(() => ({}));
@@ -121,7 +121,7 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
   const currentQuestion = questions[(game.round-1)%questions.length];
   const [cards, setCards] = useState<{id:string;cardType:keyof typeof helperCards;usedAt:string|null}[]>(() => helperCardKeys.sort(() => Math.random() - 0.5).slice(0, 3).map((cardType, index) => ({ id: `local-${index}`, cardType, usedAt: null })));
   const [openedCard, setOpenedCard] = useState<keyof typeof helperCards | null>(null);
-  useEffect(() => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; const loadCards = async () => { const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? '/api'}/rooms/${game.onlineRoomCode}/cards/${game.onlinePlayerId}`); if (response.ok) setCards((await response.json()).cards); }; void loadCards(); }, [game.onlineRoomCode, game.onlinePlayerId]);
+  useEffect(() => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; const loadCards = async () => { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/cards/${game.onlinePlayerId}`); if (response.ok) setCards((await response.json()).cards); }; void loadCards(); }, [game.onlineRoomCode, game.onlinePlayerId]);
   const useCard = async (id:string) => { const card = cards.find(item => item.id === id); if (!card || card.usedAt) return; if (game.onlineRoomCode && game.onlinePlayerId) { const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? '/api'}/rooms/${game.onlineRoomCode}/cards/${id}/use`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({playerId:game.onlinePlayerId}) }); if (!response.ok) return; } setCards(current => current.map(item => item.id === id ? {...item, usedAt:new Date().toISOString()} : item)); setOpenedCard(card.cardType); };
   const validTeams = game.teams.map((t,i)=>({t,i})).filter(({t,i})=>i!==game.turn && t.footballers.some(p=>p.status==='active'));
   const selected = game.targetTeam!==null && game.targetPlayer!==null ? game.teams[game.targetTeam].footballers[game.targetPlayer] : null;

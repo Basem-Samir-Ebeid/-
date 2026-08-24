@@ -32,6 +32,7 @@ async function ensureSchema() {
   if (!schemaReady) {
     schemaReady = (async () => {
       await pool.query(`
+        CREATE EXTENSION IF NOT EXISTS pgcrypto;
         CREATE TABLE IF NOT EXISTS game_rooms (
           id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
           code varchar(8) NOT NULL UNIQUE,
