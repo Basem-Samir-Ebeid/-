@@ -114,10 +114,34 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
     }
     if (path[2] === 'ready' && method === 'POST') {
       const playerId = clean(body.playerId)
-      await pool.query('UPDATE game_players SET is_ready = true WHERE id = $1 AND room_id = $2', [playerId, room.id])
-      const players = await pool.query('SELECT id, is_ready FROM game_players WHERE room_id = $1', [room.id])
-      if (players.rows.length >= 2 && players.rows.length <= 15 && players.rows.every((player) => player.is_ready)) await pool.query('UPDATE game_rooms SET status = $1, phase = $2, round = 1, current_player_id = $3 WHERE id = $4', ['playing', 'question', players.rows[0].id, room.id])
+      const updated = await pool.query('UPDATE game_players SET is_ready = true WHERE id = $1 AND room_id = $2 RETURNING id', [playerId, room.id])
+      if (!updated.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
+      const players = await pool.query('SELECT id, is_ready FROM game_players WHERE room_id = $1 ORDER BY joined_at ASC', [room.id])
+      const started = players.rows.length >= 2 && players.rows.length <= 15 && players.rows.every((player) => player.is_ready)
+      if (started) await pool.query('UPDATE game_rooms SET status = $1, phase = $2, round = 1, current_player_id = $3 WHERE id = $4', ['playing', 'question', players.rows[0].id, room.id])
+      return json({ ok: true, started })
+    }
+    if (path[2] === 'roster' && method === 'POST') {
+      const playerId = clean(body.playerId)
+      const roster = Array.isArray(body.roster) ? body.roster : []
+      if (roster.length !== 10 || roster.filter((player: { isBoss?: boolean }) => player.isBoss).length !== 2) return json({ message: 'يجب إدخال 10 لاعبين وزعيمين فقط' }, 400)
+      const player = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [playerId, room.id])
+      if (!player.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
+      await pool.query('CREATE TABLE IF NOT EXISTS game_rosters (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), player_id uuid NOT NULL REFERENCES game_players(id) ON DELETE CASCADE, slot integer NOT NULL, footballer_name varchar(100) NOT NULL, is_boss boolean NOT NULL DEFAULT false, UNIQUE(player_id, slot))')
+      await pool.query('DELETE FROM game_rosters WHERE player_id = $1', [playerId])
+      for (const [index, item] of roster.entries()) await pool.query('INSERT INTO game_rosters (player_id, slot, footballer_name, is_boss) VALUES ($1, $2, $3, $4)', [playerId, index + 1, clean(item.name) || `لاعب كرة ${index + 1}`, Boolean(item.isBoss)])
       return json({ ok: true })
+    }
+    if (path[2] === 'cards' && path[3] && method === 'GET') {
+      await pool.query('CREATE TABLE IF NOT EXISTS game_cards (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), player_id uuid NOT NULL REFERENCES game_players(id) ON DELETE CASCADE, card_type varchar(32) NOT NULL, used_at timestamptz)')
+      let cards = await pool.query('SELECT id, card_type AS "cardType", used_at AS "usedAt" FROM game_cards WHERE player_id = $1 ORDER BY id', [path[3]])
+      if (!cards.rows.length) { for (const type of ['double-shot', 'silencer', 'shield', 'informant', 'swap', 'camera'].sort(() => Math.random() - 0.5).slice(0, 3)) await pool.query('INSERT INTO game_cards (player_id, card_type) VALUES ($1, $2)', [path[3], type]); cards = await pool.query('SELECT id, card_type AS "cardType", used_at AS "usedAt" FROM game_cards WHERE player_id = $1 ORDER BY id', [path[3]]) }
+      return json({ cards: cards.rows })
+    }
+    if (path[2] === 'cards' && path[3] && path[4] === 'use' && method === 'POST') {
+      const result = await pool.query('UPDATE game_cards SET used_at = now() WHERE id = $1 AND player_id = $2 AND used_at IS NULL RETURNING id, card_type AS "cardType"', [path[3], clean(body.playerId)])
+      if (!result.rows[0]) return json({ message: 'الكرت غير موجود أو تم استخدامه من قبل' }, 409)
+      return json({ ok: true, cardType: result.rows[0].cardType })
     }
     return json({ message: 'العملية غير موجودة' }, 404)
   } catch (error) {
