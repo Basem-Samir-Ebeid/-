@@ -40,7 +40,9 @@ router.get("/rooms/:roomCode", async (req, res) => {
   const [room] = await db.select().from(gameRooms).where(eq(gameRooms.code, roomCode));
   if (!room) return res.status(404).json({ message: "الغرفة غير موجودة" });
   const players = await db.select({ id: gamePlayers.id, displayName: gamePlayers.displayName, teamName: gamePlayers.teamName, isReady: gamePlayers.isReady }).from(gamePlayers).where(eq(gamePlayers.roomId, room.id)).orderBy(asc(gamePlayers.joinedAt));
-  return res.json({ room: { code: room.code, status: room.status, phase: room.phase, round: room.round }, players });
+  const rosterRows = await db.select().from(gameRosters).where(eq(gameRosters.playerId, players.map((player) => player.id)[0] ?? '00000000-0000-0000-0000-000000000000'));
+  const rosterReady = new Set(rosterRows.length === 10 ? [players[0]?.id] : []);
+  return res.json({ room: { code: room.code, status: room.status, phase: room.phase, round: room.round }, players: players.map((player) => ({ ...player, rosterReady: rosterReady.has(player.id) })) });
 });
 
 router.post("/rooms/:roomCode/ready", async (req, res) => {
