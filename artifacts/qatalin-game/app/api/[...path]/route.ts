@@ -143,12 +143,14 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
     }
     if (path[2] === 'cards' && path[3] && method === 'GET') {
       await pool.query('CREATE TABLE IF NOT EXISTS game_cards (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), player_id uuid NOT NULL REFERENCES game_players(id) ON DELETE CASCADE, card_type varchar(32) NOT NULL, used_at timestamptz)')
+      const player = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [path[3], room.id])
+      if (!player.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
       let cards = await pool.query('SELECT id, card_type AS "cardType", used_at AS "usedAt" FROM game_cards WHERE player_id = $1 ORDER BY id', [path[3]])
       if (!cards.rows.length) { for (const type of ['double-shot', 'silencer', 'shield', 'informant', 'swap', 'camera'].sort(() => Math.random() - 0.5).slice(0, 3)) await pool.query('INSERT INTO game_cards (player_id, card_type) VALUES ($1, $2)', [path[3], type]); cards = await pool.query('SELECT id, card_type AS "cardType", used_at AS "usedAt" FROM game_cards WHERE player_id = $1 ORDER BY id', [path[3]]) }
       return json({ cards: cards.rows })
     }
     if (path[2] === 'cards' && path[3] && path[4] === 'use' && method === 'POST') {
-      const result = await pool.query('UPDATE game_cards SET used_at = now() WHERE id = $1 AND player_id = $2 AND used_at IS NULL RETURNING id, card_type AS "cardType"', [path[3], clean(body.playerId)])
+      const result = await pool.query('UPDATE game_cards SET used_at = now() WHERE id = $1 AND player_id = $2 AND used_at IS NULL AND EXISTS (SELECT 1 FROM game_players WHERE id = $2 AND room_id = $3) RETURNING id, card_type AS "cardType"', [path[3], clean(body.playerId), room.id])
       if (!result.rows[0]) return json({ message: 'الكرت غير موجود أو تم استخدامه من قبل' }, 409)
       return json({ ok: true, cardType: result.rows[0].cardType })
     }

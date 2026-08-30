@@ -321,6 +321,19 @@ button { cursor: pointer; }
 .centered { justify-content: center; }
 .winner-squad { max-width: 440px; margin: 0 auto 25px; display: flex; flex-direction: column; gap: 8px; }
 .cards-panel { display: flex; flex-direction: column; gap: 14px; }
+.teaser-box { display: flex; flex-direction: column; gap: 10px; margin: 22px 0; padding: 22px 24px; border: 1px solid rgba(204,153,51,.55); border-right: 4px solid hsl(var(--accent)); background: rgba(84,57,28,.24); text-align: right; }
+.teaser-kicker { color: hsl(var(--accent)); font-size: 12px; letter-spacing: .12em; }
+.teaser-box strong { color: #f2e4c6; font-size: clamp(18px, 2.4vw, 25px); line-height: 1.7; }
+.teaser-box small { color: hsl(var(--muted-foreground)); font-size: 14px; line-height: 1.6; }
+.cards-panel { overflow: hidden; }
+.helper-card-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%; padding: 16px; border: 1px solid rgba(204,153,51,.28); background: rgba(20,17,15,.55); color: hsl(var(--foreground)); text-align: right; cursor: pointer; transition: border-color .2s, transform .2s, background .2s; }
+.helper-card-row:hover:not(:disabled) { border-color: hsl(var(--accent)); background: rgba(115,34,29,.3); transform: translateY(-2px); }
+.helper-card-row:disabled { opacity: .5; cursor: not-allowed; }
+.helper-card-row strong, .helper-card-row small { display: block; }
+.helper-card-row small { margin-top: 4px; color: hsl(var(--muted-foreground)); line-height: 1.5; }
+.card-list { display: flex; flex-direction: column; gap: 10px; }
+.card-detail { margin-top: 14px; padding: 16px; border-top: 1px solid rgba(204,153,51,.35); color: hsl(var(--foreground)); }
+.card-detail p { color: hsl(var(--muted-foreground)); line-height: 1.6; }
 .cards-reference { width: 100%; max-height: 94px; object-fit: cover; object-position: center; border: 1px solid rgba(207,169,105,.22); opacity: .88; }
 .helper-card-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 12px; border: 1px solid rgba(207,169,105,.18); color: hsl(var(--foreground)); background: rgba(0,0,0,.16); text-align: right; }
 .helper-card-row:hover:not(:disabled) { border-color: hsl(var(--accent)); background: rgba(219,167,79,.08); }
