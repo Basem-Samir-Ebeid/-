@@ -51,6 +51,14 @@ async function ensureSchema() {
           joined_at timestamptz NOT NULL DEFAULT now()
         );
         CREATE INDEX IF NOT EXISTS game_players_room_id_idx ON game_players(room_id);
+        CREATE TABLE IF NOT EXISTS game_rosters (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          player_id uuid NOT NULL REFERENCES game_players(id) ON DELETE CASCADE,
+          slot integer NOT NULL,
+          footballer_name varchar(100) NOT NULL,
+          is_boss boolean NOT NULL DEFAULT false,
+          UNIQUE(player_id, slot)
+        );
         CREATE TABLE IF NOT EXISTS game_events (
           id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
           room_id uuid NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE,
@@ -115,8 +123,8 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
     }
     if (path[2] === 'ready' && method === 'POST') {
       const playerId = clean(body.playerId)
-      const updated = await pool.query('UPDATE game_players SET is_ready = true WHERE id = $1 AND room_id = $2 RETURNING id', [playerId, room.id])
-      if (!updated.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
+      const updated = await pool.query('UPDATE game_players SET is_ready = true WHERE id = $1 AND room_id = $2 AND EXISTS (SELECT 1 FROM game_rosters WHERE player_id = $1) RETURNING id', [playerId, room.id])
+      if (!updated.rows[0]) return json({ message: 'جهّز فريقك من 10 لاعبين وحدد زعيمين قبل الجاهزية' }, 400)
       const players = await pool.query('SELECT id, is_ready FROM game_players WHERE room_id = $1 ORDER BY joined_at ASC', [room.id])
       const started = players.rows.length >= 2 && players.rows.length <= 15 && players.rows.every((player) => player.is_ready)
       if (started) await pool.query('UPDATE game_rooms SET status = $1, phase = $2, round = 1, current_player_id = $3 WHERE id = $4', ['playing', 'question', players.rows[0].id, room.id])
