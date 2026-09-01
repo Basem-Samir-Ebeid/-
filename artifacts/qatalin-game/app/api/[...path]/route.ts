@@ -137,10 +137,16 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       const playerId = clean(body.playerId)
       const updated = await pool.query('UPDATE game_players SET is_ready = true WHERE id = $1 AND room_id = $2 AND EXISTS (SELECT 1 FROM game_rosters WHERE player_id = $1) RETURNING id', [playerId, room.id])
       if (!updated.rows[0]) return json({ message: 'جهّز فريقك من 10 لاعبين وحدد زعيمين قبل الجاهزية' }, 400)
-      const players = await pool.query('SELECT id, is_ready FROM game_players WHERE room_id = $1 ORDER BY joined_at ASC', [room.id])
-      const started = players.rows.length >= 2 && players.rows.length <= 15 && players.rows.every((player) => player.is_ready)
-      if (started) await pool.query('UPDATE game_rooms SET status = $1, phase = $2, round = 1, current_player_id = $3 WHERE id = $4', ['playing', 'question', players.rows[0].id, room.id])
-      return json({ ok: true, started })
+      const players = await pool.query('SELECT id, display_name AS "displayName", team_name AS "teamName", is_ready AS "isReady" FROM game_players WHERE room_id = $1 ORDER BY joined_at ASC', [room.id])
+      const started = players.rows.length >= 2 && players.rows.length <= 15 && players.rows.every((player) => player.isReady)
+      let gameState = null
+      if (started) {
+        const roster = await pool.query('SELECT p.id AS player_id, r.footballer_name, r.is_boss FROM game_players p JOIN game_rosters r ON r.player_id = p.id WHERE p.room_id = $1 ORDER BY p.joined_at ASC, r.slot ASC', [room.id])
+        const teams = players.rows.map((player) => ({ owner: player.displayName, teamName: player.teamName, footballers: roster.rows.filter((item) => item.player_id === player.id).map((item) => ({ name: item.footballer_name, isBoss: item.is_boss, status: 'active', revealed: false })) }))
+        gameState = { version: 2, screen: 'game', phase: 'question', playerCount: teams.length, owners: teams.map((team) => team.owner), teams, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, exclusionTargets: [], revealDecision: 'choose', revealSourcePlayer: null, notes: '', winner: null, history: [] }
+        await pool.query('UPDATE game_rooms SET status = $1, phase = $2, round = 1, current_player_id = $3, game_state = $4::jsonb WHERE id = $5', ['playing', 'question', players.rows[0].id, JSON.stringify(gameState), room.id])
+      }
+      return json({ ok: true, started, gameState })
     }
     if (path[2] === 'roster' && method === 'POST') {
       const playerId = clean(body.playerId)
@@ -168,7 +174,13 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       const actor = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [actorId, room.id])
       if (!actor.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
       const targetId = clean(body.targetId) || null
-      await pool.query('INSERT INTO game_events (room_id, actor_id, target_id, event_type, payload) VALUES ($1, $2, $3, $4, $5::jsonb)', [room.id, actorId, targetId, eventType, JSON.stringify(body.payload ?? {})])
+      const payload = body.payload && typeof body.payload === 'object' ? body.payload : {}
+      await pool.query('BEGIN')
+      try {
+        await pool.query('INSERT INTO game_events (room_id, actor_id, target_id, event_type, payload) VALUES ($1, $2, $3, $4, $5::jsonb)', [room.id, actorId, targetId, eventType, JSON.stringify(payload)])
+        if (payload.nextState && typeof payload.nextState === 'object') await pool.query('UPDATE game_rooms SET game_state = $1::jsonb WHERE id = $2', [JSON.stringify(payload.nextState), room.id])
+        await pool.query('COMMIT')
+      } catch (error) { await pool.query('ROLLBACK'); throw error }
       return json({ ok: true })
     }
     if (path[2] === 'events' && method === 'GET') {
