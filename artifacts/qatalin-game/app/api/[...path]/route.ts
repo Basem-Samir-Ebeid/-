@@ -149,6 +149,20 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       if (!cards.rows.length) { for (const type of ['double-shot', 'silencer', 'shield', 'informant', 'swap', 'camera'].sort(() => Math.random() - 0.5).slice(0, 3)) await pool.query('INSERT INTO game_cards (player_id, card_type) VALUES ($1, $2)', [path[3], type]); cards = await pool.query('SELECT id, card_type AS "cardType", used_at AS "usedAt" FROM game_cards WHERE player_id = $1 ORDER BY id', [path[3]]) }
       return json({ cards: cards.rows })
     }
+    if (path[2] === 'events' && method === 'POST') {
+      const actorId = clean(body.actorId)
+      const eventType = clean(body.eventType)
+      if (!actorId || !eventType) return json({ message: 'بيانات الحدث ناقصة' }, 400)
+      const actor = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [actorId, room.id])
+      if (!actor.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
+      const targetId = clean(body.targetId) || null
+      await pool.query('INSERT INTO game_events (room_id, actor_id, target_id, event_type, payload) VALUES ($1, $2, $3, $4, $5::jsonb)', [room.id, actorId, targetId, eventType, JSON.stringify(body.payload ?? {})])
+      return json({ ok: true })
+    }
+    if (path[2] === 'events' && method === 'GET') {
+      const events = await pool.query('SELECT id, actor_id AS "actorId", target_id AS "targetId", event_type AS "eventType", payload, created_at AS "createdAt" FROM game_events WHERE room_id = $1 ORDER BY created_at ASC', [room.id])
+      return json({ events: events.rows })
+    }
     if (path[2] === 'cards' && path[3] && path[4] === 'use' && method === 'POST') {
       const result = await pool.query('UPDATE game_cards SET used_at = now() WHERE id = $1 AND player_id = $2 AND used_at IS NULL AND EXISTS (SELECT 1 FROM game_players WHERE id = $2 AND room_id = $3) RETURNING id, card_type AS "cardType"', [path[3], clean(body.playerId), room.id])
       if (!result.rows[0]) return json({ message: 'الكرت غير موجود أو تم استخدامه من قبل' }, 409)
@@ -156,8 +170,9 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
     }
     return json({ message: 'العملية غير موجودة' }, 404)
   } catch (error) {
-    console.error('[v0] online room API error', error)
-    return json({ message: 'حدث خطأ في الخادم. حاول مرة أخرى.' }, 500)
+    const details = error instanceof Error ? error.message : String(error)
+    console.error('[v0] online room API error', { message: details, code: (error as { code?: string })?.code })
+    return json({ message: `تعذر تنفيذ الطلب: ${details}` }, 500)
   }
 }
 
