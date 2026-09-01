@@ -40,6 +40,7 @@ async function ensureSchema() {
           phase varchar(16) NOT NULL DEFAULT 'setup',
           round integer NOT NULL DEFAULT 0,
           current_player_id uuid,
+          game_state jsonb NOT NULL DEFAULT '{}'::jsonb,
           created_at timestamptz NOT NULL DEFAULT now()
         );
         CREATE TABLE IF NOT EXISTS game_players (
@@ -69,6 +70,7 @@ async function ensureSchema() {
           created_at timestamptz NOT NULL DEFAULT now()
         );
       `)
+      await pool.query("ALTER TABLE game_rooms ADD COLUMN IF NOT EXISTS game_state jsonb NOT NULL DEFAULT '{}'::jsonb")
     })().catch((error) => { schemaReady = undefined; throw error })
   }
   await schemaReady
@@ -109,7 +111,17 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
 
     if (path.length === 2 && method === 'GET') {
       const players = await pool.query('SELECT id, display_name AS "displayName", team_name AS "teamName", is_ready AS "isReady" FROM game_players WHERE room_id = $1 ORDER BY joined_at ASC', [room.id])
-      return json({ room, players: players.rows })
+      const state = await pool.query('SELECT game_state AS "gameState" FROM game_rooms WHERE id = $1', [room.id])
+      return json({ room, players: players.rows, gameState: state.rows[0]?.gameState ?? null })
+    }
+    if (path.length === 2 && method === 'POST') {
+      const playerId = clean(body.playerId)
+      const state = body.gameState
+      const player = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [playerId, room.id])
+      if (!player.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
+      if (!state || typeof state !== 'object') return json({ message: 'حالة اللعبة غير صالحة' }, 400)
+      await pool.query('UPDATE game_rooms SET game_state = $1::jsonb WHERE id = $2', [JSON.stringify(state), room.id])
+      return json({ ok: true })
     }
     if (path[2] === 'join' && method === 'POST') {
       const displayName = clean(body.displayName)

@@ -131,6 +131,19 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
   const [cards, setCards] = useState<{id:string;cardType:keyof typeof helperCards;usedAt:string|null}[]>(() => helperCardKeys.sort(() => Math.random() - 0.5).slice(0, 3).map((cardType, index) => ({ id: `local-${index}`, cardType, usedAt: null })));
   const [openedCard, setOpenedCard] = useState<keyof typeof helperCards | null>(null);
   useEffect(() => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; const loadCards = async () => { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/cards/${game.onlinePlayerId}`); if (response.ok) setCards((await response.json()).cards); }; void loadCards(); }, [game.onlineRoomCode, game.onlinePlayerId]);
+  useEffect(() => {
+    if (!game.onlineRoomCode || !game.onlinePlayerId) return;
+    let active = true;
+    const sync = async () => {
+      const response = await fetch(`/api/rooms/${game.onlineRoomCode}`);
+      if (!response.ok || !active) return;
+      const data = await response.json();
+      if (data.gameState && JSON.stringify(data.gameState) !== JSON.stringify(game)) setGame({ ...game, ...data.gameState, onlineRoomCode: game.onlineRoomCode, onlinePlayerId: game.onlinePlayerId });
+    };
+    void fetch(`/api/rooms/${game.onlineRoomCode}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, gameState: game }) });
+    const timer = window.setInterval(sync, 1500);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [game.onlineRoomCode, game.onlinePlayerId, game.screen, game.phase, game.round, game.turn, game.targetTeam, game.targetPlayer, game.winner, game.history.length, game.teams]);
   const useCard = async (id:string) => { const card = cards.find(item => item.id === id); if (!card || card.usedAt) return; if (game.onlineRoomCode && game.onlinePlayerId) { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/cards/${id}/use`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({playerId:game.onlinePlayerId}) }); if (!response.ok) return; } setCards(current => current.map(item => item.id === id ? {...item, usedAt:new Date().toISOString()} : item)); setOpenedCard(card.cardType); };
   const validTeams = game.teams.map((t,i)=>({t,i})).filter(({t,i})=>i!==game.turn && t.footballers.some(p=>p.status==='active'));
   const selected = game.targetTeam!==null && game.targetPlayer!==null ? game.teams[game.targetTeam].footballers[game.targetPlayer] : null;
