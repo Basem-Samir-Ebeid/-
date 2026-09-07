@@ -3,5 +3,6 @@
   "installCommand": "pnpm install --frozen-lockfile",
   "buildCommand": "pnpm --filter @workspace/qatalin-game build",
   "outputDirectory": "artifacts/qatalin-game/.next",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "crons": [{ "path": "/api/cron/cleanup", "schedule": "0 3 * * *" }]
 }

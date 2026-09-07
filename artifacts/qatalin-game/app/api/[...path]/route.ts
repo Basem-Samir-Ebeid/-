@@ -202,7 +202,10 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
         if (payload.nextState && typeof payload.nextState === 'object') await pool.query('UPDATE game_rooms SET game_state = $1::jsonb WHERE id = $2', [JSON.stringify(payload.nextState), room.id])
         await pool.query('COMMIT')
       } catch (error) { await pool.query('ROLLBACK'); throw error }
-      return json({ ok: true })
+      const stateResult = await pool.query('SELECT game_state AS "gameState" FROM game_rooms WHERE id = $1', [room.id])
+      const currentState = stateResult.rows[0]?.gameState ?? null
+      const revealedPlayer = currentState?.teams?.flatMap((team: { footballers: Array<{ name: string; isBoss?: boolean; revealed?: boolean }> }) => team.footballers).find((player: { name: string }) => player.name === targetId) ?? null
+      return json({ ok: true, gameState: currentState, revealedPlayer })
     }
     if (path[2] === 'events' && method === 'GET') {
       const query = new URL(request.url).searchParams
