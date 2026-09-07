@@ -25,7 +25,16 @@ attachDatabasePool(pool)
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status })
 const code = () => Math.random().toString(36).slice(2, 8).toUpperCase()
-const clean = (value: unknown) => String(value ?? '').trim()
+const clean = (value: unknown, max = 120) => String(value ?? '').trim().slice(0, max)
+const rateBuckets = new Map<string, { count: number; resetAt: number }>()
+const rateLimit = (request: Request) => {
+  const key = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  const now = Date.now()
+  const current = rateBuckets.get(key)
+  if (!current || current.resetAt <= now) { rateBuckets.set(key, { count: 1, resetAt: now + 60_000 }); return true }
+  current.count += 1
+  return current.count <= 120
+}
 let schemaReady: Promise<void> | undefined
 
 async function ensureSchema() {
@@ -71,6 +80,7 @@ async function ensureSchema() {
         );
       `)
       await pool.query("ALTER TABLE game_rooms ADD COLUMN IF NOT EXISTS game_state jsonb NOT NULL DEFAULT '{}'::jsonb")
+      await pool.query("DELETE FROM game_rooms WHERE created_at < now() - interval '24 hours'")
     })().catch((error) => { schemaReady = undefined; throw error })
   }
   await schemaReady
@@ -84,6 +94,7 @@ async function resolveRoom(roomCode: string) {
 async function handler(request: Request, context: { params: Promise<{ path?: string[] }> }) {
   const { path = [] } = await context.params
   const method = request.method
+  if (!rateLimit(request)) return json({ message: 'طلبات كثيرة جداً، حاول بعد قليل' }, 429)
   const body = method === 'POST' ? await request.json().catch(() => ({})) : {}
   try {
     if (path[0] === 'health' && method === 'GET') return json({ ok: true, service: 'qatalin-game' })
@@ -114,15 +125,7 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       const state = await pool.query('SELECT game_state AS "gameState" FROM game_rooms WHERE id = $1', [room.id])
       return json({ room, players: players.rows, gameState: state.rows[0]?.gameState ?? null })
     }
-    if (path.length === 2 && method === 'POST') {
-      const playerId = clean(body.playerId)
-      const state = body.gameState
-      const player = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [playerId, room.id])
-      if (!player.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
-      if (!state || typeof state !== 'object') return json({ message: 'حالة اللعبة غير صالحة' }, 400)
-      await pool.query('UPDATE game_rooms SET game_state = $1::jsonb WHERE id = $2', [JSON.stringify(state), room.id])
-      return json({ ok: true })
-    }
+    if (path.length === 2 && method === 'POST') return json({ message: 'تحديث الحالة يتم من خلال أحداث اللعبة فقط' }, 405)
     if (path[2] === 'join' && method === 'POST') {
       const displayName = clean(body.displayName)
       const teamName = clean(body.teamName)
@@ -196,7 +199,7 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error)
     console.error('[v0] online room API error', { message: details, code: (error as { code?: string })?.code })
-    return json({ message: `تعذر تنفيذ الطلب: ${details}` }, 500)
+    return json({ message: 'تعذر تنفيذ الطلب حالياً. حاول مرة أخرى.' }, 500)
   }
 }
 
