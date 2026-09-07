@@ -25,6 +25,7 @@ attachDatabasePool(pool)
 
 const json = (body: unknown, status = 200) => NextResponse.json(body, { status })
 const code = () => Math.random().toString(36).slice(2, 8).toUpperCase()
+const token = () => `${crypto.randomUUID()}-${crypto.randomUUID()}`
 const clean = (value: unknown, max = 120) => String(value ?? '').trim().slice(0, max)
 const rateBuckets = new Map<string, { count: number; resetAt: number }>()
 const rateLimit = (request: Request) => {
@@ -57,6 +58,7 @@ async function ensureSchema() {
           room_id uuid NOT NULL REFERENCES game_rooms(id) ON DELETE CASCADE,
           display_name varchar(80) NOT NULL,
           team_name varchar(80) NOT NULL,
+          session_token varchar(100) NOT NULL UNIQUE,
           is_ready boolean NOT NULL DEFAULT false,
           joined_at timestamptz NOT NULL DEFAULT now()
         );
@@ -80,7 +82,10 @@ async function ensureSchema() {
         );
       `)
       await pool.query("ALTER TABLE game_rooms ADD COLUMN IF NOT EXISTS game_state jsonb NOT NULL DEFAULT '{}'::jsonb")
-      await pool.query("DELETE FROM game_rooms WHERE created_at < now() - interval '24 hours'")
+      await pool.query("ALTER TABLE game_players ADD COLUMN IF NOT EXISTS session_token varchar(100)")
+      await pool.query("UPDATE game_players SET session_token = encode(gen_random_bytes(32), 'hex') WHERE session_token IS NULL")
+      await pool.query("ALTER TABLE game_players ALTER COLUMN session_token SET NOT NULL")
+      await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS game_players_session_token_idx ON game_players(session_token)")
     })().catch((error) => { schemaReady = undefined; throw error })
   }
   await schemaReady
@@ -88,7 +93,11 @@ async function ensureSchema() {
 
 async function resolveRoom(roomCode: string) {
   const result = await pool.query('SELECT * FROM game_rooms WHERE code = $1 LIMIT 1', [roomCode.toUpperCase()])
-  return result.rows[0] as { id: string; code: string; status: string; phase: string; round: number } | undefined
+  return result.rows[0] as { id: string; code: string; status: string; phase: string; round: number; current_player_id: string | null } | undefined
+}
+async function authenticatePlayer(roomId: string, playerId: unknown, sessionToken: unknown) {
+  const result = await pool.query('SELECT id, display_name AS "displayName", team_name AS "teamName" FROM game_players WHERE id = $1 AND room_id = $2 AND session_token = $3', [clean(playerId), roomId, clean(sessionToken, 100)])
+  return result.rows[0] as { id: string; displayName: string; teamName: string } | undefined
 }
 
 async function handler(request: Request, context: { params: Promise<{ path?: string[] }> }) {
@@ -111,8 +120,8 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
         if (result.rows[0]) { room = result.rows[0]; break }
       }
       if (!room) return json({ message: 'تعذر إنشاء الغرفة، حاول مرة أخرى' }, 503)
-      const player = await pool.query('INSERT INTO game_players (room_id, display_name, team_name) VALUES ($1, $2, $3) RETURNING id', [room.id, displayName, teamName])
-      return json({ roomCode: room.code, playerId: player.rows[0].id }, 201)
+      const player = await pool.query('INSERT INTO game_players (room_id, display_name, team_name, session_token) VALUES ($1, $2, $3, $4) RETURNING id, session_token AS "sessionToken"', [room.id, displayName, teamName, token()])
+      return json({ roomCode: room.code, playerId: player.rows[0].id, sessionToken: player.rows[0].sessionToken }, 201)
     }
 
     const roomCode = clean(path[1]).toUpperCase()
@@ -121,9 +130,14 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
     if (!room) return json({ message: 'الغرفة غير موجودة' }, 404)
 
     if (path.length === 2 && method === 'GET') {
+      const query = new URL(request.url).searchParams
+      const viewer = await authenticatePlayer(room.id, query.get('playerId'), query.get('sessionToken'))
+      if (!viewer) return json({ message: 'جلسة اللاعب غير صالحة' }, 401)
       const players = await pool.query('SELECT id, display_name AS "displayName", team_name AS "teamName", is_ready AS "isReady" FROM game_players WHERE room_id = $1 ORDER BY joined_at ASC', [room.id])
-      const state = await pool.query('SELECT game_state AS "gameState" FROM game_rooms WHERE id = $1', [room.id])
-      return json({ room, players: players.rows, gameState: state.rows[0]?.gameState ?? null })
+      const stateResult = await pool.query('SELECT game_state AS "gameState" FROM game_rooms WHERE id = $1', [room.id])
+      const state = stateResult.rows[0]?.gameState ?? null
+      const visibleState = state ? { ...state, teams: state.teams?.map((team: { owner: string; ownerId?: string; footballers: Array<{ name: string; isBoss?: boolean; revealed?: boolean; status: string }> }) => ({ ...team, footballers: team.footballers.map((player) => ({ ...player, isBoss: team.ownerId === viewer.id || player.revealed ? player.isBoss : undefined })) })) } : null
+      return json({ room, players: players.rows, gameState: visibleState })
     }
     if (path.length === 2 && method === 'POST') return json({ message: 'تحديث الحالة يتم من خلال أحداث اللعبة فقط' }, 405)
     if (path[2] === 'join' && method === 'POST') {
@@ -133,11 +147,13 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       if (room.status !== 'lobby') return json({ message: 'بدأت اللعبة بالفعل ولا يمكن الانضمام الآن' }, 409)
       const count = await pool.query('SELECT COUNT(*)::int AS count FROM game_players WHERE room_id = $1', [room.id])
       if (count.rows[0].count >= 15) return json({ message: 'الغرفة مكتملة — الحد الأقصى 15 لاعباً' }, 409)
-      const player = await pool.query('INSERT INTO game_players (room_id, display_name, team_name) VALUES ($1, $2, $3) RETURNING id', [room.id, displayName, teamName])
-      return json({ roomCode, playerId: player.rows[0].id }, 201)
+      const player = await pool.query('INSERT INTO game_players (room_id, display_name, team_name, session_token) VALUES ($1, $2, $3, $4) RETURNING id, session_token AS "sessionToken"', [room.id, displayName, teamName, token()])
+      return json({ roomCode, playerId: player.rows[0].id, sessionToken: player.rows[0].sessionToken }, 201)
     }
     if (path[2] === 'ready' && method === 'POST') {
       const playerId = clean(body.playerId)
+      const player = await authenticatePlayer(room.id, playerId, body.sessionToken)
+      if (!player) return json({ message: 'جلسة اللاعب غير صالحة' }, 401)
       const updated = await pool.query('UPDATE game_players SET is_ready = true WHERE id = $1 AND room_id = $2 AND EXISTS (SELECT 1 FROM game_rosters WHERE player_id = $1) RETURNING id', [playerId, room.id])
       if (!updated.rows[0]) return json({ message: 'جهّز فريقك من 10 لاعبين وحدد زعيمين قبل الجاهزية' }, 400)
       const players = await pool.query('SELECT id, display_name AS "displayName", team_name AS "teamName", is_ready AS "isReady" FROM game_players WHERE room_id = $1 ORDER BY joined_at ASC', [room.id])
@@ -145,7 +161,7 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       let gameState = null
       if (started) {
         const roster = await pool.query('SELECT p.id AS player_id, r.footballer_name, r.is_boss FROM game_players p JOIN game_rosters r ON r.player_id = p.id WHERE p.room_id = $1 ORDER BY p.joined_at ASC, r.slot ASC', [room.id])
-        const teams = players.rows.map((player) => ({ owner: player.displayName, teamName: player.teamName, footballers: roster.rows.filter((item) => item.player_id === player.id).map((item) => ({ name: item.footballer_name, isBoss: item.is_boss, status: 'active', revealed: false })) }))
+        const teams = players.rows.map((player) => ({ owner: player.displayName, ownerId: player.id, teamName: player.teamName, footballers: roster.rows.filter((item) => item.player_id === player.id).map((item) => ({ name: item.footballer_name, isBoss: item.is_boss, status: 'active', revealed: false })) }))
         gameState = { version: 2, screen: 'game', phase: 'question', playerCount: teams.length, owners: teams.map((team) => team.owner), teams, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, exclusionTargets: [], revealDecision: 'choose', revealSourcePlayer: null, notes: '', winner: null, history: [] }
         await pool.query('UPDATE game_rooms SET status = $1, phase = $2, round = 1, current_player_id = $3, game_state = $4::jsonb WHERE id = $5', ['playing', 'question', players.rows[0].id, JSON.stringify(gameState), room.id])
       }
@@ -153,6 +169,7 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
     }
     if (path[2] === 'roster' && method === 'POST') {
       const playerId = clean(body.playerId)
+      if (!await authenticatePlayer(room.id, playerId, body.sessionToken)) return json({ message: 'جلسة اللاعب غير صالحة' }, 401)
       const roster = Array.isArray(body.roster) ? body.roster : []
       if (roster.length !== 10 || roster.filter((player: { isBoss?: boolean }) => player.isBoss).length !== 2) return json({ message: 'يجب إدخال 10 لاعبين وزعيمين فقط' }, 400)
       const player = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [playerId, room.id])
@@ -164,8 +181,8 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
     }
     if (path[2] === 'cards' && path[3] && method === 'GET') {
       await pool.query('CREATE TABLE IF NOT EXISTS game_cards (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), player_id uuid NOT NULL REFERENCES game_players(id) ON DELETE CASCADE, card_type varchar(32) NOT NULL, used_at timestamptz)')
-      const player = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [path[3], room.id])
-      if (!player.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
+      const player = await authenticatePlayer(room.id, path[3], new URL(request.url).searchParams.get('sessionToken'))
+      if (!player) return json({ message: 'جلسة اللاعب غير صالحة' }, 401)
       let cards = await pool.query('SELECT id, card_type AS "cardType", used_at AS "usedAt" FROM game_cards WHERE player_id = $1 ORDER BY id', [path[3]])
       if (!cards.rows.length) { for (const type of ['double-shot', 'silencer', 'shield', 'informant', 'swap', 'camera'].sort(() => Math.random() - 0.5).slice(0, 3)) await pool.query('INSERT INTO game_cards (player_id, card_type) VALUES ($1, $2)', [path[3], type]); cards = await pool.query('SELECT id, card_type AS "cardType", used_at AS "usedAt" FROM game_cards WHERE player_id = $1 ORDER BY id', [path[3]]) }
       return json({ cards: cards.rows })
@@ -174,8 +191,9 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       const actorId = clean(body.actorId)
       const eventType = clean(body.eventType)
       if (!actorId || !eventType) return json({ message: 'بيانات الحدث ناقصة' }, 400)
-      const actor = await pool.query('SELECT id FROM game_players WHERE id = $1 AND room_id = $2', [actorId, room.id])
-      if (!actor.rows[0]) return json({ message: 'اللاعب غير موجود في هذه الغرفة' }, 403)
+      const actor = await authenticatePlayer(room.id, actorId, body.sessionToken)
+      if (!actor) return json({ message: 'جلسة اللاعب غير صالحة' }, 401)
+      if (room.current_player_id !== actorId) return json({ message: 'ليس دور هذا اللاعب حالياً' }, 409)
       const targetId = clean(body.targetId) || null
       const payload = body.payload && typeof body.payload === 'object' ? body.payload : {}
       await pool.query('BEGIN')
@@ -187,11 +205,15 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       return json({ ok: true })
     }
     if (path[2] === 'events' && method === 'GET') {
+      const query = new URL(request.url).searchParams
+      if (!await authenticatePlayer(room.id, query.get('playerId'), query.get('sessionToken'))) return json({ message: 'جلسة اللاعب غير صالحة' }, 401)
       const events = await pool.query('SELECT id, actor_id AS "actorId", target_id AS "targetId", event_type AS "eventType", payload, created_at AS "createdAt" FROM game_events WHERE room_id = $1 ORDER BY created_at ASC', [room.id])
       return json({ events: events.rows })
     }
     if (path[2] === 'cards' && path[3] && path[4] === 'use' && method === 'POST') {
-      const result = await pool.query('UPDATE game_cards SET used_at = now() WHERE id = $1 AND player_id = $2 AND used_at IS NULL AND EXISTS (SELECT 1 FROM game_players WHERE id = $2 AND room_id = $3) RETURNING id, card_type AS "cardType"', [path[3], clean(body.playerId), room.id])
+      const playerId = clean(body.playerId)
+      if (!await authenticatePlayer(room.id, playerId, body.sessionToken)) return json({ message: 'جلسة اللاعب غير صالحة' }, 401)
+      const result = await pool.query('UPDATE game_cards SET used_at = now() WHERE id = $1 AND player_id = $2 AND used_at IS NULL RETURNING id, card_type AS "cardType"', [path[3], playerId])
       if (!result.rows[0]) return json({ message: 'الكرت غير موجود أو تم استخدامه من قبل' }, 409)
       return json({ ok: true, cardType: result.rows[0].cardType })
     }
