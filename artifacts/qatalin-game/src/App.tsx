@@ -127,7 +127,6 @@ function TeamSetup({ game, draft, setDraft, onSave, onBack }: { game:GameState; 
 
 function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameState)=>void; onReset:()=>void }) {
   const attacker = game.teams[game.turn];
-  if (game.onlineRoomCode && (!attacker || game.teams.length < 2)) return <motion.main className="setup-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><section className="paper-card online-lobby"><div className="eyebrow">غرفة أونلاين</div><h1>في انتظار جاهزية جميع اللاعبين</h1><p className="section-desc">يتم تحميل الفرق وحالة اللعبة من الخادم. ستبدأ المواجهة تلقائياً بعد جاهزية الجميع.</p>{onlineError && <div className="error-banner" role="alert">{onlineError}</div>}<div className="loading-indicator" aria-live="polite">جاري مزامنة الغرفة…</div></section></motion.main>;
   const currentQuestion = questions[(game.round-1)%questions.length];
   const [cards, setCards] = useState<{id:string;cardType:keyof typeof helperCards;usedAt:string|null}[]>(() => helperCardKeys.sort(() => Math.random() - 0.5).slice(0, 3).map((cardType, index) => ({ id: `local-${index}`, cardType, usedAt: null })));
   const [openedCard, setOpenedCard] = useState<keyof typeof helperCards | null>(null);
@@ -148,6 +147,7 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
     const timer = window.setInterval(sync, 1500);
     return () => { active = false; window.clearInterval(timer); };
   }, [game.onlineRoomCode, game.onlinePlayerId, game.screen, game.phase, game.round, game.turn, game.targetTeam, game.targetPlayer, game.winner, game.history.length, game.teams]);
+  if (game.onlineRoomCode && (!attacker || game.teams.length < 2)) return <motion.main className="setup-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><section className="paper-card online-lobby"><div className="eyebrow">غرفة أونلاين</div><h1>في انتظار جاهزية جميع اللاعبين</h1><p className="section-desc">يتم تحميل الفرق وحالة اللعبة من الخادم. ستبدأ المواجهة تلقائياً بعد جاهزية الجميع.</p>{onlineError && <div className="error-banner" role="alert">{onlineError}</div>}<div className="loading-indicator" aria-live="polite">جاري مزامنة الغرفة…</div></section></motion.main>;
   const useCard = async (id:string) => { const card = cards.find(item => item.id === id); if (!card || card.usedAt) return; if (game.onlineRoomCode && game.onlinePlayerId) { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/cards/${id}/use`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({playerId:game.onlinePlayerId, sessionToken:game.onlineSessionToken}) }); if (!response.ok) { setOnlineError('تعذر استخدام الكرت'); return; } } setCards(current => current.map(item => item.id === id ? {...item, usedAt:new Date().toISOString()} : item)); setOpenedCard(card.cardType); };
   const validTeams = game.teams.map((t,i)=>({t,i})).filter(({t,i})=>i!==game.turn && t.footballers.some(p=>p.status==='active'));
   const selected = game.targetTeam!==null && game.targetPlayer!==null ? game.teams[game.targetTeam].footballers[game.targetPlayer] : null;
