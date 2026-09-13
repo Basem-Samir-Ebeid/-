@@ -63,7 +63,7 @@ function App() {
         if (!response.ok) return;
         const readyResponse = await fetch(`/api/rooms/${game.onlineRoomCode}/ready`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, sessionToken: game.onlineSessionToken }) });
         if (!readyResponse.ok) return;
-        setGame({ ...game, screen: 'game', phase: 'question', teams: [team], owners: [team.owner], playerCount: 1, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, winner: null, history: [] });
+        setGame({ ...game, screen: 'game', phase: 'question', teams: [], owners: [], playerCount: 0, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, winner: null, history: [] });
       })();
       // في الأونلاين كل لاعب يجهز فريقه فقط؛ لا نمرر الجهاز ولا نطلب منه تجهيز فرق الآخرين.
     } else {
@@ -127,6 +127,7 @@ function TeamSetup({ game, draft, setDraft, onSave, onBack }: { game:GameState; 
 
 function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameState)=>void; onReset:()=>void }) {
   const attacker = game.teams[game.turn];
+  if (game.onlineRoomCode && (!attacker || game.teams.length < 2)) return <motion.main className="setup-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><section className="paper-card online-lobby"><div className="eyebrow">غرفة أونلاين</div><h1>في انتظار جاهزية جميع اللاعبين</h1><p className="section-desc">يتم تحميل الفرق وحالة اللعبة من الخادم. ستبدأ المواجهة تلقائياً بعد جاهزية الجميع.</p>{onlineError && <div className="error-banner" role="alert">{onlineError}</div>}<div className="loading-indicator" aria-live="polite">جاري مزامنة الغرفة…</div></section></motion.main>;
   const currentQuestion = questions[(game.round-1)%questions.length];
   const [cards, setCards] = useState<{id:string;cardType:keyof typeof helperCards;usedAt:string|null}[]>(() => helperCardKeys.sort(() => Math.random() - 0.5).slice(0, 3).map((cardType, index) => ({ id: `local-${index}`, cardType, usedAt: null })));
   const [openedCard, setOpenedCard] = useState<keyof typeof helperCards | null>(null);
