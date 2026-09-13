@@ -3,6 +3,7 @@ import type { NextConfig } from 'next'
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@workspace/api-client-react'],
+  allowedDevOrigins: ['sb-62231pyua8dy.vercel.run'],
   async headers() {
     return [{ source: '/(.*)', headers: [
       { key: 'X-Content-Type-Options', value: 'nosniff' },

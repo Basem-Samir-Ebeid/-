@@ -163,7 +163,7 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
         const roster = await pool.query('SELECT p.id AS player_id, r.footballer_name, r.is_boss FROM game_players p JOIN game_rosters r ON r.player_id = p.id WHERE p.room_id = $1 ORDER BY p.joined_at ASC, r.slot ASC', [room.id])
         const teams = players.rows.map((player) => ({ owner: player.displayName, ownerId: player.id, teamName: player.teamName, footballers: roster.rows.filter((item) => item.player_id === player.id).map((item) => ({ name: item.footballer_name, isBoss: item.is_boss, status: 'active', revealed: false })) }))
         gameState = { version: 2, screen: 'game', phase: 'question', playerCount: teams.length, owners: teams.map((team) => team.owner), teams, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, exclusionTargets: [], revealDecision: 'choose', revealSourcePlayer: null, notes: '', winner: null, history: [] }
-        await pool.query('UPDATE game_rooms SET status = $1, phase = $2, round = 1, current_player_id = $3, game_state = $4::jsonb WHERE id = $5', ['playing', 'question', players.rows[0].id, JSON.stringify(gameState), room.id])
+        await pool.query('UPDATE game_rooms SET status = $1, phase = $2, round = 1, current_player_id = $3, game_state = $4::jsonb WHERE id = $5 AND status = $6', ['playing', 'question', players.rows[0].id, JSON.stringify(gameState), room.id, 'lobby'])
       }
       return json({ ok: true, started, gameState })
     }
@@ -199,7 +199,11 @@ async function handler(request: Request, context: { params: Promise<{ path?: str
       await pool.query('BEGIN')
       try {
         await pool.query('INSERT INTO game_events (room_id, actor_id, target_id, event_type, payload) VALUES ($1, $2, $3, $4, $5::jsonb)', [room.id, actorId, targetId, eventType, JSON.stringify(payload)])
-        if (payload.nextState && typeof payload.nextState === 'object') await pool.query('UPDATE game_rooms SET game_state = $1::jsonb WHERE id = $2', [JSON.stringify(payload.nextState), room.id])
+        if (payload.nextState && typeof payload.nextState === 'object') {
+          const nextState = payload.nextState as { turn?: number; phase?: string; round?: number; teams?: Array<{ ownerId?: string }> }
+          const nextPlayerId = typeof nextState.turn === 'number' ? nextState.teams?.[nextState.turn]?.ownerId : undefined
+          await pool.query('UPDATE game_rooms SET game_state = $1::jsonb, current_player_id = COALESCE($2, current_player_id), phase = COALESCE($3, phase), round = COALESCE($4, round) WHERE id = $5', [JSON.stringify(nextState), nextPlayerId ?? null, nextState.phase ?? null, nextState.round ?? null, room.id])
+        }
         await pool.query('COMMIT')
       } catch (error) { await pool.query('ROLLBACK'); throw error }
       const stateResult = await pool.query('SELECT game_state AS "gameState" FROM game_rooms WHERE id = $1', [room.id])
