@@ -1,0 +1,1 @@
+- [Online room target identity](online-room-target-identity.md) — identify players by team and roster position, because display names may repeat across teams.
