@@ -402,6 +402,10 @@ router.post("/rooms/:roomCode/cards/:cardId/use", async (req, res) => {
     res.status(401).json({ message: "جلسة اللاعب غير صالحة" });
     return;
   }
+  if (room.currentPlayerId !== player.id) {
+    res.status(409).json({ message: "لا يمكنك استخدام بطاقة خارج دورك" });
+    return;
+  }
   const result = await pool.query(
     `UPDATE game_cards SET used_at = now()
      WHERE id = $1 AND player_id = $2 AND used_at IS NULL
@@ -465,65 +469,125 @@ router.post("/rooms/:roomCode/events", async (req, res) => {
       Number.isInteger(proposedTeamIndex) &&
       Number.isInteger(proposedPlayerIndex) &&
       serverTeams[proposedTeamIndex]?.footballers[proposedPlayerIndex];
-    const targetLocation = indexedTarget && indexedTarget.name === targetName
-      ? {
-          team: serverTeams[proposedTeamIndex],
-          teamIndex: proposedTeamIndex,
-          playerIndex: proposedPlayerIndex,
-        }
-      : serverTeams
-          .map((team, teamIndex) => ({
-            team,
-            teamIndex,
-            playerIndex: team.footballers.findIndex((player) => player.name === targetName),
-          }))
-          .find((item) => item.playerIndex >= 0);
-    if (!targetLocation) throw new Error("الهدف غير موجود");
+    if (!indexedTarget || indexedTarget.name !== targetName) {
+      throw new Error("يجب تحديد الفريق واللاعب من الحالة الحالية");
+    }
+    const targetLocation = {
+      team: serverTeams[proposedTeamIndex],
+      teamIndex: proposedTeamIndex,
+      playerIndex: proposedPlayerIndex,
+    };
     if (targetLocation.team.ownerId === actorId) {
       throw new Error("لا يمكنك استهداف فريقك");
     }
     const target = targetLocation.team.footballers[targetLocation.playerIndex];
     if (target.status !== "active") throw new Error("هذا اللاعب خرج من المواجهة");
+    const currentPhase = clean(serverState.phase, 32);
+    const storedTeamIndex = Number(serverState.targetTeam);
+    const sourceIndex = Number(serverState.revealSourcePlayer);
+    if (eventType === "reveal" && !["question", "target"].includes(currentPhase)) {
+      throw new Error("لا يمكن الكشف في هذه المرحلة");
+    }
+    if (eventType !== "reveal" && currentPhase !== "reveal") {
+      throw new Error("يجب كشف لاعب قبل تنفيذ هذه الحركة");
+    }
 
-    const proposedTeams = Array.isArray(proposed.teams)
-      ? (proposed.teams as Team[])
-      : [];
-    const nextTeams = serverTeams.map((serverTeam) => {
-      const proposedTeam = proposedTeams.find(
-        (candidate) => candidate.ownerId === serverTeam.ownerId,
-      );
-      return {
-        ...serverTeam,
-        footballers: serverTeam.footballers.map((serverPlayer, playerIndex) => {
-          const proposedPlayer = proposedTeam?.footballers[playerIndex];
-          if (!proposedPlayer) return { ...serverPlayer };
-          const nextStatus = proposedPlayer.status;
-          const status =
-            nextStatus === "active" ||
-            nextStatus === "excluded" ||
-            nextStatus === "assassinated"
-              ? nextStatus
-              : serverPlayer.status;
-          return {
-            ...serverPlayer,
-            status,
-            revealed: Boolean(proposedPlayer.revealed || serverPlayer.revealed),
-          };
-        }),
-      };
-    });
+    const nextTeams = serverTeams.map((team) => ({
+      ...team,
+      footballers: team.footballers.map((player) => ({ ...player })),
+    }));
+    if (eventType === "reveal") {
+      nextTeams[targetLocation.teamIndex].footballers[targetLocation.playerIndex].revealed = true;
+    } else {
+      const sourceTeam = serverTeams[storedTeamIndex];
+      const source = sourceTeam?.footballers[sourceIndex];
+      if (storedTeamIndex !== targetLocation.teamIndex || !source) {
+        throw new Error("هدف الحركة لا يطابق مرحلة الكشف");
+      }
+      if (eventType === "exclude") {
+        if (
+          sourceIndex !== targetLocation.playerIndex ||
+          source.isBoss ||
+          !source.revealed
+        ) {
+          throw new Error("لا يمكن استبعاد هذا الهدف");
+        }
+        nextTeams[storedTeamIndex].footballers[sourceIndex].status = "excluded";
+      } else {
+        if (
+          sourceIndex === targetLocation.playerIndex ||
+          !source.isBoss ||
+          !source.revealed ||
+          source.status !== "active"
+        ) {
+          throw new Error("لا يمكن تنفيذ الاغتيال قبل كشف زعيم صالح");
+        }
+        nextTeams[storedTeamIndex].footballers[sourceIndex].status = "assassinated";
+        nextTeams[storedTeamIndex].footballers[targetLocation.playerIndex].status =
+          target.isBoss ? "assassinated" : "excluded";
+      }
+    }
 
     const nextState: Record<string, any> = {
       ...serverState,
-      ...proposed,
       teams: nextTeams,
       onlineRoomCode: undefined,
       onlinePlayerId: undefined,
       onlineSessionToken: undefined,
     };
     if (eventType === "reveal") {
-      nextTeams[targetLocation.teamIndex].footballers[targetLocation.playerIndex].revealed = true;
       nextState.phase = "reveal";
+      nextState.targetTeam = targetLocation.teamIndex;
+      nextState.targetPlayer = targetLocation.playerIndex;
+      nextState.revealSourcePlayer = targetLocation.playerIndex;
+      nextState.revealDecision = "choose";
+      nextState.exclusionTargets = [];
+    } else {
+      const aliveTeams = nextTeams
+        .map((team, index) => ({
+          index,
+          alive: team.footballers.some(
+            (player) => player.isBoss && player.status === "active",
+          ),
+        }))
+        .filter((item) => item.alive);
+      const isEnding = aliveTeams.length <= 1;
+      let nextTurn = Number(serverState.turn);
+      if (!isEnding) {
+        nextTurn = (nextTurn + 1) % nextTeams.length;
+        while (!aliveTeams.some((item) => item.index === nextTurn)) {
+          nextTurn = (nextTurn + 1) % nextTeams.length;
+        }
+      }
+      const actionTargets =
+        eventType === "assassinate"
+          ? [sourceIndex, targetLocation.playerIndex]
+          : [targetLocation.playerIndex];
+      const history = [
+        ...(Array.isArray(serverState.history) ? serverState.history : []),
+        ...actionTargets.map((playerIndex, index) => ({
+          round: Number(serverState.round),
+          attacker: actor.displayName,
+          target: `${serverTeams[storedTeamIndex].footballers[playerIndex].name} — ${serverTeams[storedTeamIndex].owner}`,
+          action:
+            eventType === "assassinate" || index === 0
+              ? "assassinate"
+              : "exclude",
+        })),
+      ];
+      Object.assign(nextState, {
+        phase: isEnding ? "ending" : "question",
+        turn: nextTurn,
+        round: Number(serverState.round) + 1,
+        targetTeam: null,
+        targetPlayer: null,
+        exclusionTargets: [],
+        revealSourcePlayer: null,
+        revealDecision: "choose",
+        notes: "",
+        winner: isEnding ? aliveTeams[0]?.index ?? null : null,
+        history,
+      });
     }
     await client.query(
       `INSERT INTO game_events
