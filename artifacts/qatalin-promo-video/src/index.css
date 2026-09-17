@@ -1,0 +1,106 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@500;600;700;800;900&family=Noto+Kufi+Arabic:wght@400;600;700;800&display=swap');
+@import 'tailwindcss';
+
+:root {
+  --color-primary: #d74932;
+  --color-secondary: #b98555;
+  --color-accent: #e7b866;
+  --color-bg-light: #17110f;
+  --color-bg-dark: #08090b;
+  --color-bg-muted: #261a16;
+  --color-text-primary: #f7e5c7;
+  --color-text-secondary: #bca995;
+  --color-text-muted: #806d61;
+  --color-text-inverse: #120e0d;
+  --color-success: #8cae77;
+  --color-warning: #e7b866;
+  --color-error: #d74932;
+  --font-display: 'Noto Kufi Arabic', sans-serif;
+  --font-body: 'Cairo', sans-serif;
+  --font-mono: 'Cairo', sans-serif;
+}
+
+@theme inline {
+  --color-primary: var(--color-primary);
+  --color-secondary: var(--color-secondary);
+  --color-accent: var(--color-accent);
+  --color-bg-light: var(--color-bg-light);
+  --color-bg-dark: var(--color-bg-dark);
+  --color-bg-muted: var(--color-bg-muted);
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-text-inverse: var(--color-text-inverse);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-error: var(--color-error);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+body {
+  font-family: var(--font-body);
+  margin: 0;
+  background: var(--color-bg-dark);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+
+.noise {
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.3'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+  opacity: .09;
+  pointer-events: none;
+}
+
+.arabic-title {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: -.045em;
+}
+
+.label {
+  font-family: var(--font-body);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.video-media-frame {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.video-media-frame > :is(img, video) {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  width: 100%;
+}
+
+.video-media-frame[data-media-fit='contain'] > :is(img, video) {
+  object-fit: contain;
+}
+
+.video-media-frame[data-media-position='top'] > :is(img, video) {
+  object-position: top;
+}
+
+.video-media-frame[data-media-position='right'] > :is(img, video) {
+  object-position: right;
+}
+
+.video-media-frame[data-media-position='bottom'] > :is(img, video) {
+  object-position: bottom;
+}
+
+.video-media-frame[data-media-position='left'] > :is(img, video) {
+  object-position: left;
+}

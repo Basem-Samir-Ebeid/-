@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ArrowLeft, ArrowRight, Check, CircleHelp, Crosshair, Eye, FileWarning, Flag, LogOut, RotateCcw, Shield, Skull, Target, UserRound, UsersRound } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BarChart3, Check, CircleHelp, Crosshair, Eye, FileWarning, Flag, LogOut, RotateCcw, Shield, Skull, Target, UserRound, UsersRound, Volume2 } from 'lucide-react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -14,9 +14,10 @@ const referenceArtwork = '/game-artwork.jpg';
 type Screen = 'intro' | 'room' | 'local-setup' | 'teams' | 'game';
 type Phase = 'question' | 'target' | 'reveal' | 'assassination' | 'ending';
 type Footballer = { name: string; isBoss: boolean; status: 'active' | 'excluded' | 'assassinated'; revealed: boolean };
-type Team = { owner: string; footballers: Footballer[] };
+type Team = { owner: string; ownerId?: string; teamName?: string; footballers: Footballer[] };
 type HistoryItem = { round: number; attacker: string; target: string; action: 'exclude' | 'assassinate' };
-type GameState = { version: 2; screen: Screen; phase: Phase; playerCount: number; owners: string[]; teams: Team[]; setupIndex: number; round: number; turn: number; targetTeam: number | null; targetPlayer: number | null; exclusionTargets: number[]; revealDecision: 'choose' | 'exclude' | 'assassinate'; revealSourcePlayer: number | null; notes: string; winner: number | null; history: HistoryItem[]; onlineRoomCode?: string; onlinePlayerId?: string; onlineSessionToken?: string };
+type GameState = { version: 2; screen: Screen; phase: Phase; playerCount: number; owners: string[]; teams: Team[]; setupIndex: number; round: number; turn: number; targetTeam: number | null; targetPlayer: number | null; exclusionTargets: number[]; revealDecision: 'choose' | 'exclude' | 'assassinate'; revealSourcePlayer: number | null; notes: string; winner: number | null; history: HistoryItem[]; turnDeadlineAt?: string | null; cardEffects?: Record<string, unknown>; onlineRoomCode?: string; onlinePlayerId?: string; onlineSessionToken?: string };
+type HelperCard = { id: string; cardType: keyof typeof helperCards; usedAt: string | null };
 
 const queryClient = new QueryClient();
 const STORAGE_KEY = 'qatalin-football-gangs-v2';
@@ -31,6 +32,15 @@ const helperCards = {
   camera: { name: 'كاميرا مراقبة', detail: 'تكشف توزيع زعماء العصابة داخل قائمة الخصم.' },
 } as const;
 const helperCardKeys = Object.keys(helperCards) as Array<keyof typeof helperCards>;
+const makeLocalHands = (playerCount: number): Record<number, HelperCard[]> => Object.fromEntries(
+  Array.from({ length: playerCount }, (_, playerIndex) => [
+    playerIndex,
+    [...helperCardKeys]
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 3)
+      .map((cardType, cardIndex) => ({ id: `local-${playerIndex}-${cardIndex}`, cardType, usedAt: null })),
+  ]),
+) as Record<number, HelperCard[]>;
 const questions = [
   'أي لاعب في فريق خصمك يحاول توجيه الشك بعيداً عنه؟ ولماذا؟',
   'لو كان عليك كشف لاعب واحد الآن، من تختار وما دليلك؟',
@@ -59,11 +69,17 @@ function App() {
     const team = { owner: game.owners[game.setupIndex], footballers: cleaned };
     if (game.onlineRoomCode && game.onlinePlayerId) {
       void (async () => {
-        const response = await fetch(`/api/rooms/${game.onlineRoomCode}/roster`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, sessionToken: game.onlineSessionToken, roster: cleaned }) });
-        if (!response.ok) return;
-        const readyResponse = await fetch(`/api/rooms/${game.onlineRoomCode}/ready`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, sessionToken: game.onlineSessionToken }) });
-        if (!readyResponse.ok) return;
-        setGame({ ...game, screen: 'game', phase: 'question', teams: [], owners: [], playerCount: 0, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, winner: null, history: [] });
+        try {
+          const response = await fetch(`/api/rooms/${game.onlineRoomCode}/roster`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, sessionToken: game.onlineSessionToken, roster: cleaned }) });
+          const responseData = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(responseData.message ?? 'تعذر حفظ التشكيلة');
+          const readyResponse = await fetch(`/api/rooms/${game.onlineRoomCode}/ready`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, sessionToken: game.onlineSessionToken }) });
+          const readyData = await readyResponse.json().catch(() => ({}));
+          if (!readyResponse.ok) throw new Error(readyData.message ?? 'تعذر تسجيل الجاهزية');
+          setGame({ ...game, screen: 'game', phase: 'question', teams: [], owners: [], playerCount: 0, setupIndex: 0, round: 1, turn: 0, targetTeam: null, targetPlayer: null, winner: null, history: [] });
+        } catch (error) {
+          window.alert(error instanceof Error ? error.message : 'تعذر حفظ الفريق');
+        }
       })();
       // في الأونلاين كل لاعب يجهز فريقه فقط؛ لا نمرر الجهاز ولا نطلب منه تجهيز فرق الآخرين.
     } else {
@@ -99,11 +115,12 @@ function LocalSetup({ game, setCount, update, onBack, onContinue }: { game: Game
 function RoomSetup({ game, setCount, update, onBack, onContinue }: { game: GameState; setCount: (n:number)=>void; update:(c:Partial<GameState>)=>void; onBack:()=>void; onContinue:()=>void }) {
   const [name, setName] = useState(game.owners[0] ?? '');
   const [teamName, setTeamName] = useState('فريق الظلال');
-  const [roomCode, setRoomCode] = useState('');
+  const [roomCode, setRoomCode] = useState(game.onlineRoomCode ?? '');
   const [onlineCode, setOnlineCode] = useState('');
-  const [playerId, setPlayerId] = useState('');
-  const [onlinePlayers, setOnlinePlayers] = useState<{displayName:string;teamName:string;isReady:boolean}[]>([]);
-  const [onlineMode, setOnlineMode] = useState<'idle'|'lobby'>('idle');
+  const [playerId, setPlayerId] = useState(game.onlinePlayerId ?? '');
+   const [onlinePlayers, setOnlinePlayers] = useState<{id:string;displayName:string;teamName:string;isReady:boolean}[]>([]);
+   const [roomOwnerId, setRoomOwnerId] = useState('');
+  const [onlineMode, setOnlineMode] = useState<'idle'|'lobby'>(game.onlineRoomCode ? 'lobby' : 'idle');
   const [onlineError, setOnlineError] = useState('');
   const api = '/api';
   const requestJson = async (url: string, init?: RequestInit) => {
@@ -114,9 +131,9 @@ function RoomSetup({ game, setCount, update, onBack, onContinue }: { game: GameS
   };
   const createRoom = async () => { setOnlineError(''); try { const data = await requestJson(`${api}/rooms`, { method:'POST', body:JSON.stringify({displayName:name.trim(),teamName:teamName.trim()}) }); setRoomCode(data.roomCode); setPlayerId(data.playerId); update({ onlineRoomCode: data.roomCode, onlinePlayerId: data.playerId, onlineSessionToken: data.sessionToken }); setOnlineMode('lobby'); } catch (error) { setOnlineError(error instanceof Error ? error.message : 'تعذر إنشاء الغرفة'); } };
   const joinRoom = async () => { setOnlineError(''); const normalizedCode = onlineCode.trim().toUpperCase(); if (!/^[A-Z0-9]{6}$/.test(normalizedCode)) return setOnlineError('اكتب كود غرفة صحيحاً من 6 أحرف'); try { const data = await requestJson(`${api}/rooms/${normalizedCode}/join`, { method:'POST', body:JSON.stringify({displayName:name.trim(),teamName:teamName.trim()}) }); setRoomCode(data.roomCode); setPlayerId(data.playerId); update({ onlineRoomCode: data.roomCode, onlinePlayerId: data.playerId, onlineSessionToken: data.sessionToken }); setOnlineMode('lobby'); } catch (error) { setOnlineError(error instanceof Error ? error.message : 'تعذر الانضمام'); } };
-  useEffect(() => { if(onlineMode !== 'lobby' || !roomCode) return; let active = true; const load = async () => { try { const data = await requestJson(`${api}/rooms/${roomCode}?playerId=${encodeURIComponent(playerId)}`, { headers: { Authorization: `Bearer ${game.onlineSessionToken ?? ''}` } }); if (active) setOnlinePlayers(data.players ?? []); } catch (error) { if (active) setOnlineError(error instanceof Error ? error.message : 'تعذر تحديث الغرفة'); } }; void load(); const timer=window.setInterval(load, 2500); return () => { active = false; window.clearInterval(timer); }; }, [api, onlineMode, roomCode]);
+   useEffect(() => { if(onlineMode !== 'lobby' || !roomCode || !playerId) return; let active = true; const load = async () => { try { await requestJson(`${api}/rooms/${roomCode}/rejoin`, { method: 'POST', headers: { Authorization: `Bearer ${game.onlineSessionToken ?? ''}` }, body: JSON.stringify({ playerId, sessionToken: game.onlineSessionToken }) }); const data = await requestJson(`${api}/rooms/${roomCode}?playerId=${encodeURIComponent(playerId)}`, { headers: { Authorization: `Bearer ${game.onlineSessionToken ?? ''}` } }); if (active) { const players = data.players ?? []; setOnlinePlayers(players); setRoomOwnerId(data.room?.ownerPlayerId ?? ''); const me = players.find((player: { id?: string; displayName:string; teamName:string }) => player.id === playerId); if (me) { setName(me.displayName); setTeamName(me.teamName); } } } catch (error) { if (active) setOnlineError(error instanceof Error ? error.message : 'تعذر إعادة الاتصال بالغرفة'); } }; void load(); const timer=window.setInterval(load, 2500); return () => { active = false; window.clearInterval(timer); }; }, [api, onlineMode, roomCode, playerId, game.onlineSessionToken]);
   const ready = async () => { setOnlineError(''); try { await requestJson(`${api}/rooms/${roomCode}/ready`, {method:'POST',body:JSON.stringify({playerId, sessionToken: game.onlineSessionToken})}); update({ onlineRoomCode: roomCode, onlinePlayerId: playerId, playerCount: Math.max(game.playerCount, onlinePlayers.length) }); onContinue(); } catch (error) { setOnlineError(error instanceof Error ? error.message : 'تعذر تسجيل الجاهزية'); } };
-  return <motion.main className="setup-wrap" initial={{opacity:0,x:20}} animate={{opacity:1,x:0}}><div className="eyebrow">الخطوة الأولى</div><div className="game-header"><h1>{onlineMode==='lobby'?'الغرفة جاهزة':'من في الغرفة؟'}</h1><div className="round-marker"><strong>{onlineMode==='lobby'?roomCode:game.playerCount}</strong> {onlineMode==='lobby'?'كود الغرفة':'لاعبين محليين'}</div></div>{onlineMode==='lobby'?<section className="paper-card online-lobby"><div className="card-heading"><div><h2>غرفة {roomCode}</h2><p>شارك الكود مع أصدقائك. القائمة تتحدث تلقائياً.</p></div><UsersRound /></div><div className="room-code-display">{roomCode}</div><div className="online-player-list">{onlinePlayers.map((player,i)=><div className="player-row" key={`${player.displayName}-${i}`}><span>{player.displayName} — {player.teamName}</span><span className="status-tag alive">{player.isReady?'جاهز':'ينتظر'}</span></div>)}</div><div className="setup-footer"><button className="utility-button" onClick={()=>setOnlineMode('idle')}><ArrowRight /> رجوع</button><button className="primary-button" onClick={onContinue}>تجهيز فريقي <ArrowLeft /></button></div></section>:<div className="setup-layout"><section className="paper-card"><div className="card-heading"><div><h2>لعب أونلاين</h2><p>أنشئ غرفة أو انضم بكود.</p></div><Crosshair /></div><label className="name-field"><span className="name-index">اسمك</span><input className="text-input" value={name} onChange={e=>setName(e.target.value)} placeholder="مثال: كريم" maxLength={40} /></label><label className="name-field"><span className="name-index">فريقك</span><input className="text-input" value={teamName} onChange={e=>setTeamName(e.target.value)} maxLength={40} /></label><div className="setup-footer"><button className="primary-button" onClick={createRoom} disabled={!name.trim()}>أنشئ غرفة <ArrowLeft /></button></div><div className="join-row"><input className="text-input" value={onlineCode} onChange={e=>setOnlineCode(e.target.value.toUpperCase())} placeholder="كود الغرفة" /><button className="ghost-button" onClick={joinRoom} disabled={!name.trim()||onlineCode.length<4}>انضم</button></div>{onlineError&&<p className="error-copy">{onlineError}</p>}</section><section className="paper-card"><div className="card-heading"><div><h2>تجربة محلية</h2><p>للتجربة على جهاز واحد، جهّز من 2 إلى 6 فرق.</p></div><UsersRound /></div><div className="count-grid compact">{Array.from({ length: 14 }, (_, i) => i + 2).map(n => <button key={n} className={`count-button ${game.playerCount===n?'selected':''}`} onClick={()=>setCount(n)}>{n}</button>)}</div><div className="name-list">{game.owners.map((owner,i)=><label className="name-field" key={i}><span className="name-index">{i+1}</span><input className="text-input" value={owner} onChange={e=>update({owners:game.owners.map((x,j)=>j===i?e.target.value:x)})} aria-label={`اسم اللاعب ${i+1}`} /></label>)}</div><div className="setup-footer"><button className="utility-button" onClick={onBack}><ArrowRight /> رجوع</button><button className="primary-button" onClick={onContinue} disabled={game.owners.some(n=>!n.trim())}>تجهيز ا��فرق <ArrowLeft /></button></div></section></div>}</motion.main>;
+   return <motion.main className="setup-wrap" initial={{opacity:0,x:20}} animate={{opacity:1,x:0}}><div className="eyebrow">الخطوة الأولى</div><div className="game-header"><h1>{onlineMode==='lobby'?'الغرفة جاهزة':'من في الغرفة؟'}</h1><div className="round-marker"><strong>{onlineMode==='lobby'?roomCode:game.playerCount}</strong> {onlineMode==='lobby'?'كود الغرفة':'لاعبين محليين'}</div></div>{onlineMode==='lobby'?<section className="paper-card online-lobby"><div className="card-heading"><div><h2>غرفة {roomCode}</h2><p>اتصلت بالغرفة تلقائياً. القائمة تتحدث كل ثانيتين.</p></div><UsersRound /></div><div className="room-code-display">{roomCode}</div><div className="online-player-list">{onlinePlayers.map((player,i)=><div className="player-row" key={`${player.id}-${i}`}><span>{player.displayName} — {player.teamName} {player.id === roomOwnerId && <small className="owner-badge">صاحب الغرفة</small>}</span><span className="status-tag alive">{player.isReady?'جاهز':'ينتظر'}</span></div>)}</div><div className="setup-footer"><button className="utility-button" onClick={()=>setOnlineMode('idle')}><ArrowRight /> رجوع</button><button className="primary-button" onClick={onContinue}>تجهيز فريقي <ArrowLeft /></button></div></section>:<div className="setup-layout"><section className="paper-card"><div className="card-heading"><div><h2>لعب أونلاين</h2><p>أنشئ غرفة أو انضم بكود.</p></div><Crosshair /></div><label className="name-field"><span className="name-index">اسمك</span><input className="text-input" value={name} onChange={e=>setName(e.target.value)} placeholder="مثال: كريم" maxLength={40} /></label><label className="name-field"><span className="name-index">فريقك</span><input className="text-input" value={teamName} onChange={e=>setTeamName(e.target.value)} maxLength={40} /></label><div className="setup-footer"><button className="primary-button" onClick={createRoom} disabled={!name.trim()}>أنشئ غرفة <ArrowLeft /></button></div><div className="join-row"><input className="text-input" value={onlineCode} onChange={e=>setOnlineCode(e.target.value.toUpperCase())} placeholder="كود الغرفة" /><button className="ghost-button" onClick={joinRoom} disabled={!name.trim()||onlineCode.length<4}>انضم</button></div>{onlineError&&<p className="error-copy">{onlineError}</p>}</section><section className="paper-card"><div className="card-heading"><div><h2>تجربة محلية</h2><p>للتجربة على جهاز واحد، جهّز من 2 إلى 6 فرق.</p></div><UsersRound /></div><div className="count-grid compact">{Array.from({ length: 14 }, (_, i) => i + 2).map(n => <button key={n} className={`count-button ${game.playerCount===n?'selected':''}`} onClick={()=>setCount(n)}>{n}</button>)}</div><div className="name-list">{game.owners.map((owner,i)=><label className="name-field" key={i}><span className="name-index">{i+1}</span><input className="text-input" value={owner} onChange={e=>update({owners:game.owners.map((x,j)=>j===i?e.target.value:x)})} aria-label={`اسم اللاعب ${i+1}`} /></label>)}</div><div className="setup-footer"><button className="utility-button" onClick={onBack}><ArrowRight /> رجوع</button><button className="primary-button" onClick={onContinue} disabled={game.owners.some(n=>!n.trim())}>تجهيز ا��فرق <ArrowLeft /></button></div></section></div>}</motion.main>;
 }
 
 function TeamSetup({ game, draft, setDraft, onSave, onBack }: { game:GameState; draft:Footballer[]; setDraft:(d:Footballer[])=>void; onSave:()=>void; onBack:()=>void }) {
@@ -127,11 +144,48 @@ function TeamSetup({ game, draft, setDraft, onSave, onBack }: { game:GameState; 
 
 function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameState)=>void; onReset:()=>void }) {
   const attacker = game.teams[game.turn];
+  const isMyTurn = !game.onlinePlayerId || attacker?.ownerId === game.onlinePlayerId;
   const currentQuestion = questions[(game.round-1)%questions.length];
-  const [cards, setCards] = useState<{id:string;cardType:keyof typeof helperCards;usedAt:string|null}[]>(() => helperCardKeys.sort(() => Math.random() - 0.5).slice(0, 3).map((cardType, index) => ({ id: `local-${index}`, cardType, usedAt: null })));
+  const [localCardsByPlayer, setLocalCardsByPlayer] = useState<Record<number, HelperCard[]>>(() => makeLocalHands(Math.max(game.teams.length, game.playerCount, 2)));
+  const [onlineCards, setOnlineCards] = useState<HelperCard[]>([]);
   const [openedCard, setOpenedCard] = useState<keyof typeof helperCards | null>(null);
+  const [cardMessage, setCardMessage] = useState('');
+  const [now, setNow] = useState(() => Date.now());
   const [onlineError, setOnlineError] = useState('');
-  useEffect(() => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; const loadCards = async () => { try { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/cards/${game.onlinePlayerId}`, { headers: { Authorization: `Bearer ${game.onlineSessionToken ?? ''}` } }); if (!response.ok) throw new Error('تعذر تحميل الكروت'); setCards((await response.json()).cards); } catch (error) { setOnlineError(error instanceof Error ? error.message : 'تعذر تحميل الكروت'); } }; void loadCards(); }, [game.onlineRoomCode, game.onlinePlayerId, game.onlineSessionToken]);
+  const [showStats, setShowStats] = useState(false);
+  const [stats, setStats] = useState<{ rounds: number; events: number; byPlayer: Array<{ displayName: string; actions: number; reveals: number; finishes: number }> } | null>(null);
+  const [voteTarget, setVoteTarget] = useState('');
+  const [voteResults, setVoteResults] = useState<Array<{ targetId: string; count: number }>>([]);
+   const [soundEnabled, setSoundEnabled] = useState(true);
+  const cards = game.onlineRoomCode ? onlineCards : localCardsByPlayer[game.turn] ?? [];
+  const canUseCards = Boolean(attacker) && isMyTurn && game.phase !== 'ending';
+  const secondsLeft = game.turnDeadlineAt ? Math.max(0, Math.ceil((new Date(game.turnDeadlineAt).getTime() - now) / 1000)) : null;
+   const playSound = (frequency: number, duration = 0.12) => {
+     if (!soundEnabled) return;
+     try {
+       const context = new AudioContext();
+       const oscillator = context.createOscillator();
+       const gain = context.createGain();
+       oscillator.type = 'sine';
+       oscillator.frequency.value = frequency;
+       gain.gain.setValueAtTime(0.0001, context.currentTime);
+       gain.gain.exponentialRampToValueAtTime(0.12, context.currentTime + 0.01);
+       gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration);
+       oscillator.connect(gain);
+       gain.connect(context.destination);
+       oscillator.start();
+       oscillator.stop(context.currentTime + duration);
+       oscillator.addEventListener('ended', () => void context.close(), { once: true });
+     } catch {
+       // Audio is optional and may be blocked until the browser receives a gesture.
+     }
+   };
+  useEffect(() => {
+    if (!game.onlineRoomCode || !game.turnDeadlineAt) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [game.onlineRoomCode, game.turnDeadlineAt]);
+  useEffect(() => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; const loadCards = async () => { try { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/cards/${game.onlinePlayerId}`, { headers: { Authorization: `Bearer ${game.onlineSessionToken ?? ''}` } }); if (!response.ok) throw new Error('تعذر تحميل الكروت'); setOnlineCards((await response.json()).cards); } catch (error) { setOnlineError(error instanceof Error ? error.message : 'تعذر تحميل الكروت'); } }; void loadCards(); }, [game.onlineRoomCode, game.onlinePlayerId, game.onlineSessionToken]);
   useEffect(() => {
     if (!game.onlineRoomCode || !game.onlinePlayerId) return;
     let active = true;
@@ -148,14 +202,43 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
     return () => { active = false; window.clearInterval(timer); };
   }, [game.onlineRoomCode, game.onlinePlayerId, game.screen, game.phase, game.round, game.turn, game.targetTeam, game.targetPlayer, game.winner, game.history.length, game.teams]);
   if (game.onlineRoomCode && (!attacker || game.teams.length < 2)) return <motion.main className="setup-wrap" initial={{ opacity: 0 }} animate={{ opacity: 1 }}><section className="paper-card online-lobby"><div className="eyebrow">غرفة أونلاين</div><h1>في انتظار جاهزية جميع اللاعبين</h1><p className="section-desc">يتم تحميل الفرق وحالة اللعبة من الخادم. ستبدأ المواجهة تلقائياً بعد جاهزية الجميع.</p>{onlineError && <div className="error-banner" role="alert">{onlineError}</div>}<div className="loading-indicator" aria-live="polite">جاري مزامنة الغرفة…</div></section></motion.main>;
-  const useCard = async (id:string) => { const card = cards.find(item => item.id === id); if (!card || card.usedAt) return; if (game.onlineRoomCode && game.onlinePlayerId) { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/cards/${id}/use`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({playerId:game.onlinePlayerId, sessionToken:game.onlineSessionToken}) }); if (!response.ok) { setOnlineError('تعذر استخدام الكرت'); return; } } setCards(current => current.map(item => item.id === id ? {...item, usedAt:new Date().toISOString()} : item)); setOpenedCard(card.cardType); };
+  const useCard = async (id:string) => {
+    if (!canUseCards) return;
+    const card = cards.find(item => item.id === id);
+    if (!card || card.usedAt) return;
+    if (game.onlineRoomCode && game.onlinePlayerId) {
+      const response = await fetch(`/api/rooms/${game.onlineRoomCode}/cards/${id}/use`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({playerId:game.onlinePlayerId, sessionToken:game.onlineSessionToken}) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { setOnlineError(data.message ?? 'تعذر استخدام الكرت'); return; }
+      setOnlineCards(current => current.map(item => item.id === id ? {...item, usedAt:new Date().toISOString()} : item));
+       if (data.gameState) setGame({ ...game, ...data.gameState, onlineRoomCode: game.onlineRoomCode, onlinePlayerId: game.onlinePlayerId, onlineSessionToken: game.onlineSessionToken });
+       setCardMessage(data.effect?.intel?.length
+         ? `${data.effect.message}: ${data.effect.intel.map((item: { name: string; team: string }) => `${item.name} — ${item.team}`).join('، ')}`
+         : (data.effect?.message ?? helperCards[card.cardType].detail));
+    } else {
+      setLocalCardsByPlayer(current => ({ ...current, [game.turn]: (current[game.turn] ?? []).map(item => item.id === id ? {...item, usedAt:new Date().toISOString()} : item) }));
+    }
+     playSound(520);
+    setOpenedCard(card.cardType);
+  };
   const validTeams = game.teams.map((t,i)=>({t,i})).filter(({t,i})=>i!==game.turn && t.footballers.some(p=>p.status==='active'));
   const selected = game.targetTeam!==null && game.targetPlayer!==null ? game.teams[game.targetTeam].footballers[game.targetPlayer] : null;
   const update = (c:Partial<GameState>) => setGame({...game,...c});
-  const syncEvent = (eventType: string, targetId: string | undefined, nextState: GameState) => { if (!game.onlineRoomCode || !game.onlinePlayerId) return; void fetch(`/api/rooms/${game.onlineRoomCode}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actorId: game.onlinePlayerId, sessionToken: game.onlineSessionToken, targetId, eventType, payload: { round: game.round, nextState: { ...nextState, onlineRoomCode: undefined, onlinePlayerId: undefined, onlineSessionToken: undefined } } }) }).then(response => { if (!response.ok) setOnlineError('تعذر حفظ حركة اللعب على الخادم'); }).catch(() => setOnlineError('تعذر الاتصال بالخادم')); };
-  const reveal = async () => { if (game.targetTeam===null || game.targetPlayer===null || !selected) return; const teams=game.teams.map((t,ti)=>ti===game.targetTeam?{...t,footballers:t.footballers.map((p,pi)=>pi===game.targetPlayer?{...p,revealed:true}:p)}:t); const nextState={...game,teams,phase:'reveal' as const,revealDecision:'choose' as const,revealSourcePlayer:game.targetPlayer,exclusionTargets:[]}; if (game.onlineRoomCode && game.onlinePlayerId) { try { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/events`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({actorId:game.onlinePlayerId, sessionToken:game.onlineSessionToken, targetId:selected.name, eventType:'reveal', payload:{round:game.round,nextState:{...nextState,onlineRoomCode:undefined,onlinePlayerId:undefined,onlineSessionToken:undefined}}}) }); const data = await response.json(); if (!response.ok) throw new Error(data.message ?? 'تعذر الكشف'); if (data.revealedPlayer) setGame({...nextState,teams:teams.map((team) => ({...team,footballers:team.footballers.map((player) => player.name === data.revealedPlayer.name ? {...player,isBoss:data.revealedPlayer.isBoss,revealed:true}:player)}))}); else setGame(nextState); } catch (error) { setOnlineError(error instanceof Error ? error.message : 'تعذر الكشف'); } } else setGame(nextState); };
+  const syncEvent = async (eventType: string, targetId: string | undefined, nextState: GameState) => {
+    if (!game.onlineRoomCode || !game.onlinePlayerId) return true;
+    try {
+      const response = await fetch(`/api/rooms/${game.onlineRoomCode}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actorId: game.onlinePlayerId, sessionToken: game.onlineSessionToken, targetId, eventType, payload: { round: game.round, nextState: { ...nextState, onlineRoomCode: undefined, onlinePlayerId: undefined, onlineSessionToken: undefined } } }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message ?? 'تعذر حفظ حركة اللعب على الخادم');
+      return true;
+    } catch (error) {
+      setOnlineError(error instanceof Error ? error.message : 'تعذر الاتصال بالخادم');
+      return false;
+    }
+  };
+  const reveal = async () => { if (game.targetTeam===null || game.targetPlayer===null || !selected) return; const teams=game.teams.map((t,ti)=>ti===game.targetTeam?{...t,footballers:t.footballers.map((p,pi)=>pi===game.targetPlayer?{...p,revealed:true}:p)}:t); const nextState={...game,teams,phase:'reveal' as const,revealDecision:'choose' as const,revealSourcePlayer:game.targetPlayer,exclusionTargets:[]}; if (game.onlineRoomCode && game.onlinePlayerId) { try { const response = await fetch(`/api/rooms/${game.onlineRoomCode}/events`, { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({actorId:game.onlinePlayerId, sessionToken:game.onlineSessionToken, targetId:selected.name, eventType:'reveal', payload:{round:game.round,nextState:{...nextState,onlineRoomCode:undefined,onlinePlayerId:undefined,onlineSessionToken:undefined}}}) }); const data = await response.json(); if (!response.ok) throw new Error(data.message ?? 'تعذر الكشف'); if (data.revealedPlayer) setGame({...nextState,teams:teams.map((team, teamIndex) => ({...team,footballers:team.footballers.map((player, playerIndex) => teamIndex === data.targetTeam && playerIndex === data.targetPlayer ? {...player,isBoss:data.revealedPlayer.isBoss,revealed:true}:player)}))}); else setGame(nextState); } catch (error) { setOnlineError(error instanceof Error ? error.message : 'تعذر الكشف'); } } else setGame(nextState); };
   const chooseRevealDecision = () => { if (!selected?.isBoss || !selected.revealed) return; update({ revealDecision: 'exclude', phase: 'assassination', targetPlayer: null, exclusionTargets: [] }); };
-  const act = (action:'exclude'|'assassinate') => {
+  const act = async (action:'exclude'|'assassinate') => {
     if (game.targetTeam === null || game.targetPlayer === null || !selected) return;
     if (action === 'assassinate' && (game.phase !== 'assassination' || selected.status !== 'active')) return;
     if (game.phase === 'assassination' && game.targetPlayer === game.revealSourcePlayer) return;
@@ -181,12 +264,14 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
     const teams = game.teams.map((team, teamIndex) => teamIndex === game.targetTeam ? { ...team, footballers: team.footballers.map((player, index) => statusByIndex.has(index) ? { ...player, status: statusByIndex.get(index)! } : player) } : team);
     const aliveTeams = teams.map((team, index) => ({ index, alive: team.footballers.some(player => player.isBoss && player.status === 'active') })).filter(item => item.alive);
     const history = [...game.history, ...targets.map(targetIndex => ({ round: game.round, attacker: attacker.owner, target: `${game.teams[game.targetTeam!].footballers[targetIndex].name} — ${game.teams[game.targetTeam!].owner}`, action: targetIndex === sourceIndex && selected.isBoss ? 'assassinate' as const : action }))];
-    if (aliveTeams.length <= 1) { const nextState={ ...game, teams, history, winner: aliveTeams[0]?.index ?? null, phase: 'ending' as const }; syncEvent(action, selected.name, nextState); setGame(nextState); }
+     if (aliveTeams.length <= 1) { const nextState={ ...game, teams, history, winner: aliveTeams[0]?.index ?? null, phase: 'ending' as const }; if (!await syncEvent(action, selected.name, nextState)) return; playSound(180, 0.2); setGame(nextState); }
     else {
       let next = (game.turn + 1) % teams.length;
       while (!aliveTeams.some(item => item.index === next)) next = (next + 1) % teams.length;
       const nextState={ ...game, teams, history, turn: next, round: game.round + 1, phase: 'question' as const, targetTeam: null, targetPlayer: null, exclusionTargets: [], revealSourcePlayer: null, revealDecision: 'choose' as const, notes: '' };
-      syncEvent(action, selected.name, nextState); setGame(nextState);
+       if (!await syncEvent(action, selected.name, nextState)) return;
+       playSound(action === 'assassinate' ? 180 : 420);
+      setGame(nextState);
     }
   };
   const toggleExclusionTarget = (playerIndex:number) => {
@@ -196,18 +281,41 @@ function GameView({ game, setGame, onReset }: { game:GameState; setGame:(g:GameS
     const next = game.exclusionTargets.includes(playerIndex) ? game.exclusionTargets.filter(index=>index!==playerIndex) : game.exclusionTargets.length < 2 ? [...game.exclusionTargets, playerIndex] : game.exclusionTargets;
     update({ exclusionTargets: next });
   };
-  if(game.phase==='ending') return <EndingView game={game} onReset={onReset}/>;
-  return <motion.main className="game-wrap" initial={{opacity:0}} animate={{opacity:1}}>{onlineError && <div className="error-banner" role="alert">{onlineError}</div>}<div className="game-header"><div><div className="eyebrow">دور {attacker.owner}</div><h1>{game.phase==='question'?'غرفة التحقيق':game.phase==='target'?'حدد هدفك':game.phase==='assassination'?'اختر لاعباً للاغتيال':'تم كشف الهوية'}</h1></div><div className="round-marker"><strong>{game.round}</strong> الجولة الحالية</div></div><div className="turn-banner"><Target /><div><strong>{attacker.owner} يهاجم الآن</strong><span>اختر لاعباً من فريق خصمك. لا يمكنك استهداف فريقك.</span></div></div><div className="phase-layout"><section className="paper-card phase-card">
-    {game.phase==='question'&&<><div className="phase-icon"><CircleHelp /></div><h2>سؤال الجولة</h2><p className="large-copy">ناقش السؤال مع خصومك وابحث عن أي دفاع يكشف ترتيب العصابة.</p><div className="question-quote">« {currentQuestion} »</div><div className="teaser-box"><span className="teaser-kicker">إشارة سرّية</span><strong>« لا تثق في أو�� إجابة… الزعيم يعرف كيف يختبئ خلف أكثر لاعب يبدو بريئاً »</strong><small>راقب التردد، ثم اختر هدفك قبل أن ينقلب الدليل ضدك.</small></div><button className="primary-button action-gap" onClick={()=>update({phase:'target'})}>ابدأ الكشف <ArrowLeft /></button></>}
+  const loadStats = async () => {
+    if (!game.onlineRoomCode || !game.onlinePlayerId) return;
+    const response = await fetch(`/api/rooms/${game.onlineRoomCode}/stats?playerId=${encodeURIComponent(game.onlinePlayerId)}`, { headers: { Authorization: `Bearer ${game.onlineSessionToken ?? ''}` } });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) { setOnlineError(data.message ?? 'تعذر تحميل الإحصائيات'); return; }
+    setStats(data);
+    setShowStats(true);
+  };
+  const submitVote = async () => {
+    if (!game.onlineRoomCode || !game.onlinePlayerId || !voteTarget) return;
+    const response = await fetch(`/api/rooms/${game.onlineRoomCode}/votes`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, sessionToken: game.onlineSessionToken, targetId: voteTarget, round: game.round }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) { setOnlineError(data.message ?? 'تعذر حفظ التصويت'); return; }
+    const votesResponse = await fetch(`/api/rooms/${game.onlineRoomCode}/votes?playerId=${encodeURIComponent(game.onlinePlayerId)}&round=${game.round}`, { headers: { Authorization: `Bearer ${game.onlineSessionToken ?? ''}` } });
+    setVoteResults((await votesResponse.json().catch(() => ({}))).votes ?? []);
+  };
+  const rematch = async () => {
+    if (!game.onlineRoomCode || !game.onlinePlayerId) return;
+    const response = await fetch(`/api/rooms/${game.onlineRoomCode}/rematch`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ playerId: game.onlinePlayerId, sessionToken: game.onlineSessionToken }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) { setOnlineError(data.message ?? 'تعذر بدء إعادة المباراة'); return; }
+    setGame({ ...game, ...data.gameState, onlineRoomCode: game.onlineRoomCode, onlinePlayerId: game.onlinePlayerId, onlineSessionToken: game.onlineSessionToken });
+  };
+  if(game.phase==='ending') return <EndingView game={game} onReset={onReset} onRematch={rematch} onStats={loadStats} stats={stats} showStats={showStats} onCloseStats={() => setShowStats(false)} />;
+  return <motion.main className="game-wrap" initial={{opacity:0}} animate={{opacity:1}}>{onlineError && <div className="error-banner" role="alert">{onlineError}</div>}<div className="game-header"><div><div className="eyebrow">دور {attacker.owner}</div><h1>{game.phase==='question'?'غرفة التحقيق':game.phase==='target'?'حدد هدفك':game.phase==='assassination'?'اختر لاعباً للاغتيال':'تم كشف الهوية'}</h1></div><div className="round-marker"><strong>{game.round}</strong> الجولة الحالية{secondsLeft !== null && <small className={secondsLeft <= 15 ? 'timer-warning' : ''}>⏱ {secondsLeft} ثانية</small>}</div></div><div className="turn-banner"><Target /><div><strong>{attacker.owner} يهاجم الآن</strong><span>اختر لاعباً من فريق خصمك. لا يمكنك استهداف فريقك.</span></div></div><div className="phase-layout"><section className="paper-card phase-card">
+    {game.phase==='question'&&<><div className="phase-icon"><CircleHelp /></div><h2>سؤال الجولة</h2><p className="large-copy">ناقش السؤال مع خصومك وابحث عن أي دفاع يكشف ترتيب العصابة.</p><div className="question-quote">« {currentQuestion} »</div><div className="teaser-box"><span className="teaser-kicker">إشارة سرّية</span><strong>« لا تثق في أول إجابة… الزعيم يعرف كيف يختبئ خلف أكثر لاعب يبدو بريئاً »</strong><small>راقب التردد، ثم اختر هدفك قبل أن ينقلب الدليل ضدك.</small></div><button className="primary-button action-gap" disabled={!isMyTurn} onClick={()=>update({phase:'target'})}>ابدأ الكشف <ArrowLeft /></button></>}
     {game.phase==='target'&&<><div className="phase-icon"><Crosshair /></div><h2>اختر فريق الخصم</h2><div className="opponent-tabs">{validTeams.map(({t,i})=><button key={i} className={`opponent-tab ${game.targetTeam===i?'selected':''}`} onClick={()=>update({targetTeam:i,targetPlayer:null})}>{t.owner}<span>{t.footballers.filter(p=>p.status==='active').length} متاح</span></button>)}</div>{game.targetTeam!==null&&<div className="footballer-grid">{game.teams[game.targetTeam].footballers.map((p,i)=><button key={i} disabled={p.status!=='active'} className={`footballer-card ${game.targetPlayer===i?'selected':''} ${p.status!=='active'?'out':''}`} onClick={()=>update({targetPlayer:i})}><UserRound /><strong>{p.name}</strong><span>{p.status==='active'?(p.revealed&&p.isBoss?'زعيم مكشوف':'متاح'):p.status==='assassinated'?'تم اغتياله':'مستبعد'}</span></button>)}</div>}<button className="primary-button action-gap" disabled={game.targetPlayer===null} onClick={reveal}>اكشف الهوية <Eye /></button></>}
     {game.phase==='assassination'&&game.targetTeam!==null&&<><div className="phase-icon"><Crosshair /></div><h2>اغتيال لاعب آخر</h2><p className="large-copy">اختر لاعباً آخر من نفس قائمة الخصم. يظهر الزعيمان ضمن القائمة بشكل طبيعي.</p><div className="footballer-grid">{game.teams[game.targetTeam].footballers.map((p,i)=><button key={i} disabled={p.status!=='active'||i===game.revealSourcePlayer} className={`footballer-card ${game.targetPlayer===i?'selected':''} ${p.status!=='active'||i===game.revealSourcePlayer?'out':''}`} onClick={()=>update({targetPlayer:i})}><UserRound /><strong>{p.name}</strong><span>{i===game.revealSourcePlayer?'تم كشفه':p.status==='active'?'متاح':p.status==='assassinated'?'تم اغتياله':'مستبعد'}</span></button>)}</div><button className="danger-button action-gap" disabled={game.targetPlayer===null} onClick={()=>act('assassinate')}><Crosshair /> ��أكيد الاغتيال</button></>}
-    {game.phase==='reveal'&&selected&&<><div className={`reveal-result ${selected.isBoss?'is-boss':''}`}><div className="result-symbol">{selected.isBoss?<Skull />:<UserRound />}</div><span>تم كشف</span><h2>{selected.name}</h2><strong>{selected.isBoss?'زعيم عصابة':'لاعب عادي'}</strong><p>{selected.isBoss?'تم كشف زعيم الخصم. قبل اختيار أي لاعب، حدّد قرارك أولاً: الاستبعاد أو الاغتيال المباشر.':'ليس زعيماً. يمكنك استبعاده من قائمة الخصم.'}</p></div><div className="decision-actions">{selected.isBoss?game.revealDecision==='choose'?<div className="reveal-choice"><strong>اختر لاعباً آخر من نفس الفريق لاستبعاده مع الزعيم المكتشف</strong><div className="reveal-choice-actions"><button className="primary-button" onClick={chooseRevealDecision}><UserRound /> اختر لاعباً لاستبعاده مع الزعيم</button></div></div>:null:<button className="primary-button" onClick={()=>act('exclude')}><UserRound /> استبعاد اللاعب</button>}</div></>}
-  </section><aside className="game-sidebar"><TeamStatus teams={game.teams} turn={game.turn} history={game.history} onReset={onReset}/>{cards.length > 0 && <section className="paper-card cards-panel"><div className="card-heading"><div><h2>كروت المساعدة</h2><p>اختر بطاقة تكتيكية واحدة؛ استخدامها نهائي وقد يقلب نتيجة الجولة.</p></div><Shield /></div><img className="cards-reference" src="/images/helper-cards-reference.jpg" alt="نماذج كروت المساعدة" /><div className="card-list">{cards.map(card => <button className="helper-card-row" key={card.id} disabled={Boolean(card.usedAt)} onClick={() => useCard(card.id)}><span><strong>{helperCards[card.cardType].name}</strong><small>{helperCards[card.cardType].detail}</small></span><span className="status-tag target">{card.usedAt?'مستخدم':'استخدم'}</span></button>)}</div>{openedCard && <div className="card-detail"><strong>{helperCards[openedCard].name}</strong><p>{helperCards[openedCard].detail}</p><button className="utility-button" onClick={() => setOpenedCard(null)}>إغلاق</button></div>}</section>}</aside></div></motion.main>;
+     {game.phase==='reveal'&&selected&&<><div className={`reveal-result ${selected.isBoss?'is-boss':''}`}><div className="result-symbol">{selected.isBoss?<Skull />:<UserRound />}</div><span>تم كشف</span><h2>{selected.name}</h2><strong>{selected.isBoss?'زعيم عصابة':'لاعب عادي'}</strong><p>{selected.isBoss?'تم كشف زعيم الخصم. قبل اختيار أي لاعب، حدّد قرارك أولاً: الاستبعاد أو الاغتيال المباشر.':game.cardEffects?.doubleShot?'فعّلت كرت الاغتيال المزدوج. اختر لاعباً آخر لإسقاط هدفين في نفس الدور.':'ليس زعيماً. يمكنك استبعاده من قائمة الخصم.'}</p></div><div className="decision-actions">{selected.isBoss?game.revealDecision==='choose'?<div className="reveal-choice"><strong>اختر لاعباً آخر من نفس الفريق لاستبعاده مع الزعيم المكتشف</strong><div className="reveal-choice-actions"><button className="primary-button" onClick={chooseRevealDecision}><UserRound /> اختر لاعباً لاستبعاده مع الزعيم</button></div></div>:null:game.cardEffects?.doubleShot?<button className="danger-button" onClick={()=>update({phase:'assassination',targetPlayer:null})}><Crosshair /> اختر الهدف الثاني للاغتيال</button>:<button className="primary-button" onClick={()=>act('exclude')}><UserRound /> استبعاد اللاعب</button>}</div></>}
+   </section><aside className="game-sidebar"><TeamStatus teams={game.teams} turn={game.turn} history={game.history} onReset={onReset}/>{cards.length > 0 && <section className="paper-card cards-panel"><div className="card-heading"><div><h2>بطاقات {attacker.owner}</h2><p>{canUseCards ? 'هذه البطاقات خاصة بصاحب الدور الحالي ويمكن استخدام كل بطاقة مرة واحدة.' : 'البطاقات خاصة بكل لاعب وتصبح قابلة للاستخدام عند وصول دوره.'}</p></div><Shield /></div><img className="cards-reference" src="/images/helper-cards-reference.jpg" alt="نماذج كروت المساعدة من اللعبة" /><div className="card-list">{cards.map((card, index) => <button className={`helper-card-row ${card.usedAt ? 'used' : ''}`} key={card.id} disabled={Boolean(card.usedAt) || !canUseCards} onClick={() => useCard(card.id)}><span className="helper-card-art"><img src="/images/helper-cards-reference.jpg" alt="" /><b>{String(index + 1).padStart(2, '0')}</b></span><span className="helper-card-copy"><strong>{helperCards[card.cardType].name}</strong><small>{helperCards[card.cardType].detail}</small></span><span className="status-tag target">{card.usedAt?'مستخدم':canUseCards?'استخدم':'انتظر الدور'}</span></button>)}</div>{openedCard && <div className="card-detail"><strong>{helperCards[openedCard].name}</strong><p>{cardMessage || helperCards[openedCard].detail}</p><button className="utility-button" onClick={() => setOpenedCard(null)}>إغلاق</button></div>}</section>}<section className="paper-card vote-panel"><div className="card-heading"><div><h2>تصويت الجولة</h2><p>صوّت على اللاعب الأكثر إثارة للشك.</p></div><button className="sound-toggle" type="button" onClick={() => setSoundEnabled((enabled) => !enabled)} aria-pressed={soundEnabled}><Volume2 size={17} /> {soundEnabled ? 'الأصوات مفعلة' : 'الأصوات صامتة'}</button></div><select className="text-input" value={voteTarget} onChange={(event) => setVoteTarget(event.target.value)}><option value="">اختر لاعباً</option>{game.teams.filter((team) => team.ownerId !== game.onlinePlayerId).flatMap((team) => team.footballers.filter((player) => player.status === 'active').map((player) => <option key={`${team.owner}-${player.name}`} value={`${player.name} — ${team.owner}`}>{player.name} — {team.owner}</option>))}</select><button className="ghost-button action-gap" onClick={submitVote} disabled={!voteTarget || !game.onlineRoomCode}>حفظ التصويت</button>{voteResults.length > 0 && <div className="history-panel">{voteResults.map((vote) => <p key={vote.targetId}><strong>{vote.targetId}</strong> — {vote.count} صوت</p>)}</div>}</section></aside></div></motion.main>;
 }
 
 function TeamStatus({teams,turn,history,onReset}:{teams:Team[];turn:number;history:HistoryItem[];onReset:()=>void}) { return <aside className="paper-card players-card"><div className="card-heading"><div><h2>حالة الفرق</h2><p>سجل القوة المتبقية.</p></div><Flag /></div><div className="team-status-list">{teams.map((team,i)=>{const bosses=team.footballers.filter(p=>p.isBoss&&p.status!=='assassinated').length;return <div className={`team-status ${i===turn?'current':''}`} key={i}><div><strong>{team.owner}</strong><span>{team.footballers.filter(p=>p.status==='active').length} لاعبين متاحين</span></div><div className="boss-lives"><Skull /> {bosses}/2</div></div>})}</div>{history.length>0&&<div className="history-panel"><h3>آخر العمليات</h3>{history.slice(-3).reverse().map((h,i)=><p key={i}><strong>{h.attacker}</strong> {h.action==='assassinate'?'اغتال':'استبعد'} {h.target}</p>)}</div>}<button className="utility-button action-gap" onClick={onReset}><RotateCcw /> غرفة جديدة</button></aside> }
 
-function EndingView({game,onReset}:{game:GameState;onReset:()=>void}) { const winner=game.winner===null?null:game.teams[game.winner]; return <motion.main className="game-wrap" initial={{opacity:0}} animate={{opacity:1}}><section className="paper-card result-hero"><div className="result-symbol"><Shield /></div><div className="eyebrow centered">انتهت المواجهة</div><h1>فريق {winner?.owner} انتصر</h1><p>بقي لهذا الفريق زعيم واحد على الأقل، بينما تم اغتيال زعماء كل الفرق المنافسة.</p><div className="winner-squad">{winner?.footballers.filter(p=>p.isBoss).map(p=><div className="player-row" key={p.name}><span>{p.name}</span><span className="status-tag target">{p.status==='assassinated'?'مغتال':'زعيم ناجٍ'}</span></div>)}</div><button className="primary-button" onClick={onReset}><RotateCcw /> افتح غرفة جديدة</button></section></motion.main> }
+function EndingView({game,onReset,onRematch,onStats,stats,showStats,onCloseStats}:{game:GameState;onReset:()=>void;onRematch:()=>void;onStats:()=>void;stats:{rounds:number;events:number;byPlayer:Array<{displayName:string;actions:number;reveals:number;finishes:number}>}|null;showStats:boolean;onCloseStats:()=>void}) { const winner=game.winner===null?null:game.teams[game.winner]; return <motion.main className="game-wrap" initial={{opacity:0}} animate={{opacity:1}}><section className="paper-card result-hero"><div className="result-symbol"><Shield /></div><div className="eyebrow centered">انتهت المواجهة</div><h1>فريق {winner?.owner} انتصر</h1><p>بقي لهذا الفريق زعيم واحد على الأقل، بينما تم اغتيال زعماء كل الفرق المنافسة.</p><div className="winner-squad">{winner?.footballers.filter(p=>p.isBoss).map(p=><div className="player-row" key={p.name}><span>{p.name}</span><span className="status-tag target">{p.status==='assassinated'?'مغتال':'زعيم ناجٍ'}</span></div>)}</div><div className="ending-actions">{game.onlineRoomCode && <><button className="primary-button" onClick={onRematch}><RotateCcw /> إعادة المباراة</button><button className="ghost-button" onClick={onStats}><BarChart3 /> الإحصائيات</button></>}{!game.onlineRoomCode && <button className="primary-button" onClick={onReset}><RotateCcw /> افتح غرفة جديدة</button>}</div></section>{showStats && <div className="modal-backdrop" onClick={onCloseStats}><section className="paper-card stats-modal" onClick={(event) => event.stopPropagation()}><div className="card-heading"><div><div className="eyebrow">تقرير المواجهة</div><h2>الإحصائيات</h2></div><button className="utility-button" onClick={onCloseStats}>إغلاق</button></div>{stats ? <><div className="stats-summary"><strong>{stats.rounds}</strong><span>جولة</span><strong>{stats.events}</strong><span>حركة مسجلة</span></div><div className="history-panel">{stats.byPlayer.map((item) => <p key={item.displayName}><strong>{item.displayName}</strong> — {item.actions} حركات، {item.reveals} كشف، {item.finishes} حسم</p>)}</div></> : <div className="loading-indicator">جاري تحميل التقرير…</div>}</section></div>}</motion.main> }
 
 function ExitConfirmModal({onCancel,onConfirm}:{onCancel:()=>void;onConfirm:()=>void}) { return <motion.div className="modal-backdrop exit-backdrop" initial={{opacity:0}} animate={{opacity:1}} onClick={onCancel}><motion.div className="paper-card exit-modal" role="dialog" aria-modal="true" aria-labelledby="exit-title" onClick={e=>e.stopPropagation()} initial={{opacity:0,y:18,scale:.96}} animate={{opacity:1,y:0,scale:1}}><div className="exit-modal-icon"><LogOut size={22} /></div><div className="eyebrow centered">تأكيد الخروج</div><h2 id="exit-title">هل تريد مغادرة اللعبة؟</h2><p>سيتم حذف تقدم الغرفة الحالية والعودة إلى الصفحة الرئيسية. لا يمكن التراجع عن هذا الإجراء.</p><div className="exit-actions"><button className="utility-button" onClick={onCancel}>البقاء في اللعبة</button><button className="danger-button" onClick={onConfirm}><LogOut size={16} /> خروج وحذف التقدم</button></div></motion.div></motion.div> }
 

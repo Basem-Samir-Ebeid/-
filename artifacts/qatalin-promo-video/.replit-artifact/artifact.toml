@@ -1,0 +1,29 @@
+kind = "video"
+videoAspectRatio = "16:9"
+previewPath = "/qatalin-promo-video/"
+title = "فيديو عصابة الملاعب"
+description = "فيديو ترويجي متحرك بنسبة 16:9 يقدّم لعبة عصابة الملاعب، التحقيق، الكروت، الغرف الأونلاين، والنتيجة النهائية."
+version = "1.0.0"
+id = "artifacts/qatalin-promo-video"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/qatalin-promo-video/" ]
+localPort = 24280
+
+[services.development]
+run = "pnpm --filter @workspace/qatalin-promo-video run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/qatalin-promo-video", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/qatalin-promo-video/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24280"
+BASE_PATH = "/qatalin-promo-video/"
