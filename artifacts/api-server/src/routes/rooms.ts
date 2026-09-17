@@ -23,9 +23,19 @@ type Team = {
   footballers: Footballer[];
 };
 
+type GameState = Record<string, any> & {
+  teams: Team[];
+  phase: string;
+  turn: number;
+  round: number;
+  targetTeam: number | null;
+  targetPlayer: number | null;
+};
+
 const router: IRouter = Router();
 const maxPlayers = 15;
 const cardTypes = ["double-shot", "silencer", "shield", "informant", "swap", "camera"];
+const turnSeconds = 90;
 
 const clean = (value: unknown, max = 120) =>
   String(value ?? "").trim().slice(0, max);
@@ -46,7 +56,10 @@ function requestToken(req: Request, body: Record<string, unknown> = {}) {
 
 async function findRoom(code: string) {
   const result = await pool.query(
-    `SELECT id, code, status, phase, round, current_player_id AS "currentPlayerId"
+    `SELECT id, code, status, phase, round,
+            current_player_id AS "currentPlayerId",
+            owner_player_id AS "ownerPlayerId",
+            turn_deadline_at AS "turnDeadlineAt"
      FROM game_rooms WHERE code = $1 LIMIT 1`,
     [code.toUpperCase()],
   );
@@ -58,6 +71,8 @@ async function findRoom(code: string) {
         phase: string;
         round: number;
         currentPlayerId: string | null;
+         ownerPlayerId: string | null;
+         turnDeadlineAt: string | null;
       }
     | undefined;
 }
@@ -96,6 +111,20 @@ function visibleGameState(
   };
 }
 
+function nextDeadline() {
+  return new Date(Date.now() + turnSeconds * 1000).toISOString();
+}
+
+function publicEvent(row: Record<string, unknown>) {
+  return {
+    id: row.id,
+    actorId: row.actorId,
+    targetId: row.targetId,
+    eventType: row.eventType,
+    createdAt: row.createdAt,
+  };
+}
+
 function validRoster(roster: unknown) {
   if (!Array.isArray(roster) || roster.length !== 10) return false;
   const names = roster.map((item) => clean((item as { name?: unknown })?.name, 100));
@@ -130,6 +159,10 @@ router.post("/rooms", async (req, res) => {
        (id, room_id, display_name, team_name, session_token)
        VALUES ($1, $2, $3, $4, $5)`,
       [playerId, roomId, displayName, teamName, sessionToken],
+    );
+    await pool.query(
+      "UPDATE game_rooms SET owner_player_id = $1 WHERE id = $2",
+      [playerId, roomId],
     );
     res.status(201).json({
       roomCode: result.rows[0].code,
@@ -179,6 +212,31 @@ router.post("/rooms/:roomCode/join", async (req, res) => {
   res.status(201).json({ roomCode, playerId, sessionToken });
 });
 
+router.post("/rooms/:roomCode/rejoin", async (req, res) => {
+  const roomCode = clean(req.params.roomCode, 8).toUpperCase();
+  const room = await findRoom(roomCode);
+  if (!room) {
+    res.status(404).json({ message: "الغرفة غير موجودة" });
+    return;
+  }
+  const player = await authenticate(
+    room.id,
+    req.body?.playerId,
+    requestToken(req, req.body ?? {}),
+  );
+  if (!player) {
+    res.status(401).json({ message: "جلسة إعادة الانضمام غير صالحة" });
+    return;
+  }
+  res.json({
+    ok: true,
+    roomCode,
+    playerId: player.id,
+    sessionToken: requestToken(req, req.body ?? {}),
+    status: room.status,
+  });
+});
+
 router.get("/rooms/:roomCode", async (req, res) => {
   const room = await findRoom(clean(req.params.roomCode, 8));
   if (!room) {
@@ -209,6 +267,9 @@ router.get("/rooms/:roomCode", async (req, res) => {
     string,
     unknown
   > | null;
+  if (gameState && room.turnDeadlineAt && !gameState.turnDeadlineAt) {
+    gameState.turnDeadlineAt = room.turnDeadlineAt;
+  }
   res.json({
     room,
     players: players.rows,
@@ -310,7 +371,7 @@ router.post("/rooms/:roomCode/ready", async (req, res) => {
       owner: player.displayName,
       ownerId: player.id,
       teamName: player.teamName,
-      footballers: rosterResult.rows
+      footballers: (rosterResult.rows as Array<{ playerId: string; footballerName: string; isBoss: boolean }>)
         .filter((item) => item.playerId === player.id)
         .map((item) => ({
           name: item.footballerName,
@@ -337,13 +398,15 @@ router.post("/rooms/:roomCode/ready", async (req, res) => {
       notes: "",
       winner: null,
       history: [],
+       turnDeadlineAt: nextDeadline(),
     };
     await pool.query(
       `UPDATE game_rooms
        SET status = 'playing', phase = 'question', round = 1,
-           current_player_id = $1, game_state = $2::jsonb
-       WHERE id = $3 AND status = 'lobby'`,
-      [players[0].id, JSON.stringify(gameState), room.id],
+            current_player_id = $1, turn_deadline_at = $2,
+            game_state = $3::jsonb
+       WHERE id = $4 AND status = 'lobby'`,
+       [players[0].id, gameState.turnDeadlineAt, JSON.stringify(gameState), room.id],
     );
   }
   res.json({ ok: true, started });
@@ -374,7 +437,8 @@ router.get("/rooms/:roomCode/cards/:playerId", async (req, res) => {
     for (const cardType of shuffled) {
       await pool.query(
         `INSERT INTO game_cards (id, player_id, card_type)
-         VALUES ($1, $2, $3)`,
+         VALUES ($1, $2, $3)
+         ON CONFLICT (player_id, card_type) DO NOTHING`,
         [randomUUID(), player.id, cardType],
       );
     }
@@ -402,21 +466,115 @@ router.post("/rooms/:roomCode/cards/:cardId/use", async (req, res) => {
     res.status(401).json({ message: "جلسة اللاعب غير صالحة" });
     return;
   }
-  if (room.currentPlayerId !== player.id) {
-    res.status(409).json({ message: "لا يمكنك استخدام بطاقة خارج دورك" });
-    return;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const lockedRoom = await client.query(
+      `SELECT current_player_id AS "currentPlayerId",
+              game_state AS "gameState"
+       FROM game_rooms WHERE id = $1 FOR UPDATE`,
+      [room.id],
+    );
+    const locked = lockedRoom.rows[0] as {
+      currentPlayerId: string | null;
+      gameState: GameState | null;
+    };
+    if (locked.currentPlayerId !== player.id) {
+      throw new Error("لا يمكنك استخدام بطاقة خارج دورك");
+    }
+    const cardResult = await client.query(
+      `SELECT id, card_type AS "cardType" FROM game_cards
+       WHERE id = $1 AND player_id = $2 AND used_at IS NULL FOR UPDATE`,
+      [clean(req.params.cardId), player.id],
+    );
+    const card = cardResult.rows[0] as { id: string; cardType: string } | undefined;
+    if (!card) throw new Error("الكرت غير موجود أو تم استخدامه من قبل");
+    if (!locked.gameState || !Array.isArray(locked.gameState.teams)) {
+      throw new Error("حالة اللعبة غير متاحة");
+    }
+
+    const nextState: GameState = {
+      ...locked.gameState,
+      teams: locked.gameState.teams.map((team) => ({
+        ...team,
+        footballers: team.footballers.map((footballer) => ({ ...footballer })),
+      })),
+    };
+    const effects: Record<string, unknown> = { type: card.cardType };
+    const existingEffects = (nextState.cardEffects ?? {}) as Record<string, unknown>;
+
+    if (card.cardType === "silencer") {
+      if (nextState.phase === "question") nextState.phase = "target";
+      effects.message = "تم تجاوز سؤال الجولة والانتقال إلى اختيار الهدف";
+    } else if (card.cardType === "shield") {
+      nextState.cardEffects = {
+        ...existingEffects,
+        shieldedPlayerId: player.id,
+      };
+      effects.message = "تم تفعيل الدرع حتى نهاية الدور القادم";
+    } else if (card.cardType === "double-shot") {
+      nextState.cardEffects = {
+        ...existingEffects,
+        doubleShot: true,
+      };
+      effects.message = "يمكنك تنفيذ اغتيال إضافي في هذه الجولة";
+    } else if (card.cardType === "swap") {
+      const team = nextState.teams.find((item) => item.ownerId === player.id);
+      const replacement = team?.footballers.find(
+        (item) => item.status === "active" && !item.isBoss,
+      );
+      const boss = team?.footballers.find(
+        (item) => item.status === "active" && item.isBoss,
+      );
+      if (!team || !boss || !replacement) throw new Error("لا يوجد لاعب صالح للتبديل");
+      boss.isBoss = false;
+      replacement.isBoss = true;
+      boss.revealed = false;
+      replacement.revealed = false;
+      effects.message = `تم نقل صفة الزعيم إلى ${replacement.name}`;
+    } else if (card.cardType === "informant" || card.cardType === "camera") {
+      const opponents = nextState.teams.filter((team) => team.ownerId !== player.id);
+      const intel = opponents.flatMap((team) =>
+        team.footballers
+          .filter((footballer) => footballer.isBoss && footballer.status === "active")
+          .map((footballer) => ({
+            name: footballer.name,
+            team: team.owner,
+          })),
+      );
+      effects.intel = card.cardType === "informant" ? intel.slice(0, 1) : intel;
+      effects.message =
+        card.cardType === "informant"
+          ? "وصلتك معلومة مؤكدة عن زعيم من الخصوم"
+          : "كشفت الكاميرا توزيع الزعماء المتبقين";
+    }
+
+    await client.query(
+      `UPDATE game_cards SET used_at = now()
+       WHERE id = $1 AND player_id = $2 AND used_at IS NULL`,
+      [card.id, player.id],
+    );
+    nextState.turnDeadlineAt = nextDeadline();
+    await client.query(
+      `UPDATE game_rooms SET game_state = $1::jsonb, turn_deadline_at = $2
+       WHERE id = $3`,
+      [JSON.stringify(nextState), nextState.turnDeadlineAt, room.id],
+    );
+    await client.query("COMMIT");
+    res.json({
+      ok: true,
+      cardType: card.cardType,
+      effect: effects,
+      gameState: visibleGameState(nextState, player.id),
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    res.status(409).json({
+      message: error instanceof Error ? error.message : "تعذر استخدام الكرت",
+    });
+  } finally {
+    client.release();
   }
-  const result = await pool.query(
-    `UPDATE game_cards SET used_at = now()
-     WHERE id = $1 AND player_id = $2 AND used_at IS NULL
-     RETURNING id, card_type AS "cardType"`,
-    [clean(req.params.cardId), player.id],
-  );
-  if (!result.rows[0]) {
-    res.status(409).json({ message: "الكرت غير موجود أو تم استخدامه من قبل" });
-    return;
-  }
-  res.json({ ok: true, cardType: result.rows[0].cardType });
 });
 
 router.post("/rooms/:roomCode/events", async (req, res) => {
@@ -496,6 +654,7 @@ router.post("/rooms/:roomCode/events", async (req, res) => {
       ...team,
       footballers: team.footballers.map((player) => ({ ...player })),
     }));
+    const cardEffects = (serverState.cardEffects ?? {}) as Record<string, unknown>;
     if (eventType === "reveal") {
       nextTeams[targetLocation.teamIndex].footballers[targetLocation.playerIndex].revealed = true;
     } else {
@@ -514,17 +673,22 @@ router.post("/rooms/:roomCode/events", async (req, res) => {
         }
         nextTeams[storedTeamIndex].footballers[sourceIndex].status = "excluded";
       } else {
+        const doubleShot = cardEffects.doubleShot === true;
         if (
           sourceIndex === targetLocation.playerIndex ||
-          !source.isBoss ||
+          (!doubleShot && !source.isBoss) ||
           !source.revealed ||
           source.status !== "active"
         ) {
           throw new Error("لا يمكن تنفيذ الاغتيال قبل كشف زعيم صالح");
         }
-        nextTeams[storedTeamIndex].footballers[sourceIndex].status = "assassinated";
-        nextTeams[storedTeamIndex].footballers[targetLocation.playerIndex].status =
-          target.isBoss ? "assassinated" : "excluded";
+        const shielded =
+          cardEffects.shieldedPlayerId === serverTeams[storedTeamIndex].ownerId;
+        if (!shielded) {
+          nextTeams[storedTeamIndex].footballers[sourceIndex].status = "assassinated";
+          nextTeams[storedTeamIndex].footballers[targetLocation.playerIndex].status =
+            doubleShot || target.isBoss ? "assassinated" : "excluded";
+        }
       }
     }
 
@@ -586,7 +750,24 @@ router.post("/rooms/:roomCode/events", async (req, res) => {
         revealDecision: "choose",
         notes: "",
         winner: isEnding ? aliveTeams[0]?.index ?? null : null,
-        history,
+        history: [
+          ...history,
+          ...(cardEffects.shieldedPlayerId === serverTeams[storedTeamIndex].ownerId
+            ? [{
+                round: Number(serverState.round),
+                attacker: actor.displayName,
+                target: `${serverTeams[storedTeamIndex].owner}`,
+                action: "exclude",
+                note: "تم إنقاذ الزعيم بالدرع",
+              }]
+            : []),
+        ],
+        cardEffects: {
+          ...cardEffects,
+          doubleShot: false,
+          shieldedPlayerId: undefined,
+        },
+        turnDeadlineAt: isEnding ? null : nextDeadline(),
       });
     }
     await client.query(
@@ -599,7 +780,11 @@ router.post("/rooms/:roomCode/events", async (req, res) => {
         actorId,
         targetName,
         eventType,
-        JSON.stringify({ round: serverState.round, nextState }),
+        JSON.stringify({
+          round: serverState.round,
+          targetTeam: targetLocation.teamIndex,
+          targetPlayer: targetLocation.playerIndex,
+        }),
       ],
     );
 
@@ -608,13 +793,15 @@ router.post("/rooms/:roomCode/events", async (req, res) => {
     const isEnding = nextState.phase === "ending";
     await client.query(
       `UPDATE game_rooms SET game_state = $1::jsonb, current_player_id = $2,
-              phase = $3, round = $4, status = $5 WHERE id = $6`,
+              phase = $3, round = $4, status = $5,
+              turn_deadline_at = $6 WHERE id = $7`,
       [
         JSON.stringify(nextState),
         isEnding ? null : nextTeam?.ownerId ?? actorId,
         String(nextState.phase ?? "question"),
         Number(nextState.round ?? room.round),
         isEnding ? "finished" : "playing",
+        isEnding ? null : nextState.turnDeadlineAt,
         room.id,
       ],
     );
@@ -636,6 +823,178 @@ router.post("/rooms/:roomCode/events", async (req, res) => {
   }
 });
 
+router.post("/rooms/:roomCode/rematch", async (req, res) => {
+  const room = await findRoom(clean(req.params.roomCode, 8));
+  if (!room) {
+    res.status(404).json({ message: "الغرفة غير موجودة" });
+    return;
+  }
+  const player = await authenticate(
+    room.id,
+    req.body?.playerId,
+    requestToken(req, req.body ?? {}),
+  );
+  if (!player) {
+    res.status(401).json({ message: "جلسة اللاعب غير صالحة" });
+    return;
+  }
+  if (room.ownerPlayerId && room.ownerPlayerId !== player.id) {
+    res.status(403).json({ message: "صاحب الغرفة فقط يستطيع بدء إعادة المباراة" });
+    return;
+  }
+
+  const stateResult = await pool.query(
+    `SELECT game_state AS "gameState" FROM game_rooms WHERE id = $1`,
+    [room.id],
+  );
+  const state = stateResult.rows[0]?.gameState as GameState | null;
+  if (!state || !Array.isArray(state.teams) || state.teams.length < 2) {
+    res.status(409).json({ message: "لا توجد مباراة مكتملة لإعادتها" });
+    return;
+  }
+  const teams = state.teams.map((team) => ({
+    ...team,
+    footballers: team.footballers.map((footballer) => ({
+      ...footballer,
+      status: "active" as const,
+      revealed: false,
+    })),
+  }));
+  const nextState: GameState = {
+    ...state,
+    screen: "game",
+    phase: "question",
+    playerCount: teams.length,
+    owners: teams.map((team) => team.owner),
+    teams,
+    setupIndex: 0,
+    round: 1,
+    turn: 0,
+    targetTeam: null,
+    targetPlayer: null,
+    exclusionTargets: [],
+    revealDecision: "choose",
+    revealSourcePlayer: null,
+    winner: null,
+    history: [],
+    cardEffects: {},
+    turnDeadlineAt: nextDeadline(),
+  };
+  await pool.query(
+    `UPDATE game_cards SET used_at = NULL
+     WHERE player_id IN (SELECT id FROM game_players WHERE room_id = $1)`,
+    [room.id],
+  );
+  await pool.query(
+    `UPDATE game_rooms SET status = 'playing', phase = 'question',
+            round = 1, current_player_id = $1,
+            turn_deadline_at = $2, game_state = $3::jsonb
+     WHERE id = $4`,
+    [teams[0]?.ownerId ?? null, nextState.turnDeadlineAt, JSON.stringify(nextState), room.id],
+  );
+  res.json({ ok: true, gameState: visibleGameState(nextState, player.id) });
+});
+
+router.get("/rooms/:roomCode/stats", async (req, res) => {
+  const room = await findRoom(clean(req.params.roomCode, 8));
+  if (!room) {
+    res.status(404).json({ message: "الغرفة غير موجودة" });
+    return;
+  }
+  const player = await authenticate(room.id, req.query.playerId, requestToken(req));
+  if (!player) {
+    res.status(401).json({ message: "جلسة اللاعب غير صالحة" });
+    return;
+  }
+  const events = await pool.query(
+    `SELECT actor_id AS "actorId", event_type AS "eventType"
+     FROM game_events WHERE room_id = $1 ORDER BY created_at ASC`,
+    [room.id],
+  );
+  const players = await pool.query(
+    `SELECT id, display_name AS "displayName" FROM game_players
+     WHERE room_id = $1 ORDER BY joined_at ASC`,
+    [room.id],
+  );
+  const playerRows = players.rows as Array<{ id: string; displayName: string }>;
+  const eventRows = events.rows as Array<{ actorId: string; eventType: string }>;
+  const byPlayer = playerRows.map((item) => ({
+    playerId: item.id,
+    displayName: item.displayName,
+    actions: eventRows.filter((event) => event.actorId === item.id).length,
+    reveals: eventRows.filter(
+      (event) => event.actorId === item.id && event.eventType === "reveal",
+    ).length,
+    finishes: eventRows.filter(
+      (event) => event.actorId === item.id && event.eventType !== "reveal",
+    ).length,
+  }));
+  const stateResult = await pool.query(
+    `SELECT game_state AS "gameState" FROM game_rooms WHERE id = $1`,
+    [room.id],
+  );
+  const state = stateResult.rows[0]?.gameState as GameState | null;
+  res.json({
+    rounds: Math.max(0, Number(state?.round ?? room.round) - 1),
+    events: events.rows.length,
+    winner: state?.winner ?? null,
+    byPlayer,
+  });
+});
+
+router.post("/rooms/:roomCode/votes", async (req, res) => {
+  const room = await findRoom(clean(req.params.roomCode, 8));
+  if (!room) {
+    res.status(404).json({ message: "الغرفة غير موجودة" });
+    return;
+  }
+  const player = await authenticate(
+    room.id,
+    req.body?.playerId,
+    requestToken(req, req.body ?? {}),
+  );
+  if (!player) {
+    res.status(401).json({ message: "جلسة اللاعب غير صالحة" });
+    return;
+  }
+  const targetId = clean(req.body?.targetId, 100);
+  const round = Number(req.body?.round ?? room.round);
+  if (!targetId || !Number.isInteger(round) || round < 1) {
+    res.status(400).json({ message: "اختر هدفاً صالحاً للتصويت" });
+    return;
+  }
+  await pool.query(
+    "DELETE FROM game_votes WHERE room_id = $1 AND round = $2 AND voter_id = $3",
+    [room.id, round, player.id],
+  );
+  await pool.query(
+    `INSERT INTO game_votes (id, room_id, round, voter_id, target_id)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [randomUUID(), room.id, round, player.id, targetId],
+  );
+  res.json({ ok: true });
+});
+
+router.get("/rooms/:roomCode/votes", async (req, res) => {
+  const room = await findRoom(clean(req.params.roomCode, 8));
+  if (!room) {
+    res.status(404).json({ message: "الغرفة غير موجودة" });
+    return;
+  }
+  const player = await authenticate(room.id, req.query.playerId, requestToken(req));
+  if (!player) {
+    res.status(401).json({ message: "جلسة اللاعب غير صالحة" });
+    return;
+  }
+  const result = await pool.query(
+    `SELECT target_id AS "targetId", COUNT(*)::int AS count
+     FROM game_votes WHERE room_id = $1 AND round = $2
+     GROUP BY target_id ORDER BY count DESC, target_id ASC`,
+    [room.id, Number(req.query.round ?? room.round)],
+  );
+  res.json({ votes: result.rows });
+});
+
 router.get("/rooms/:roomCode/events", async (req, res) => {
   const room = await findRoom(clean(req.params.roomCode, 8));
   if (!room) {
@@ -649,11 +1008,11 @@ router.get("/rooms/:roomCode/events", async (req, res) => {
   }
   const events = await pool.query(
     `SELECT id, actor_id AS "actorId", target_id AS "targetId",
-            event_type AS "eventType", payload, created_at AS "createdAt"
+             event_type AS "eventType", created_at AS "createdAt"
      FROM game_events WHERE room_id = $1 ORDER BY created_at ASC`,
     [room.id],
   );
-  res.json({ events: events.rows });
+   res.json({ events: (events.rows as Array<Record<string, unknown>>).map((row) => publicEvent(row)) });
 });
 
 export default router;
