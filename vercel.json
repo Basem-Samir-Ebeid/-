@@ -1,0 +1,7 @@
+{
+  "installCommand": "pnpm install --frozen-lockfile",
+  "buildCommand": "pnpm --filter @workspace/qatalin-game build",
+  "outputDirectory": "artifacts/qatalin-game/dist/public",
+  "framework": null,
+  "crons": [{ "path": "/api/cron/cleanup", "schedule": "0 3 * * *" }]
+}
